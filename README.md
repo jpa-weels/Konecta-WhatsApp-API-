@@ -1,4 +1,9 @@
+<div align="center">
+  <img src="Konecta.png" alt="Konecta API Logo" />
+</div>
+
 # Konecta API 🚀
+
 
 A robust WhatsApp API with support for multiple instances, webhooks, message queues, and a real-time Administration Dashboard. Fully self-hosted and built on top of Baileys, Convex, Redis, and RabbitMQ.
 

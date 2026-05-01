@@ -7,6 +7,7 @@ import { Input } from "@/components/ui/Input";
 import { cn } from "@/lib/utils";
 import { DEFAULT_API_URL } from "@/config";
 import type { InstanceConfig } from "@/types";
+import logoImage from "@/image/k.png";
 
 function getSavedApiUrl(): string {
   try {
@@ -98,8 +99,8 @@ export default function LoginPage() {
       <div className="w-full max-w-md relative z-10 animate-in fade-in zoom-in-95 duration-300">
         {/* Logo */}
         <div className="flex flex-col items-center gap-3 mb-8">
-          <div className="w-14 h-14 rounded-2xl bg-primary/10 border border-primary/20 flex items-center justify-center">
-            <Lock size={26} className="text-primary" />
+          <div className="w-16 h-16 flex items-center justify-center">
+            <img src={logoImage} alt="Konecta Logo" className="w-full h-full object-contain drop-shadow-xl" />
           </div>
           <div className="text-center">
             <div className="flex items-center justify-center gap-1.5">
