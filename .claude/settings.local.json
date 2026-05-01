@@ -1,0 +1,16 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(dir /s /b)",
+      "Bash(npm install *)",
+      "Bash(npx tsc *)",
+      "Bash(npx vite *)",
+      "Read(//d/User/KTI/Desktop/API/whatsapp-service/src/whatsapp/**)",
+      "Read(//d/User/KTI/Desktop/**)",
+      "Bash(python3 -c \"import sys,json; d=json.load\\(sys.stdin\\); print\\([k for k in d.get\\('dependencies',{}\\) if 'ip' in k.lower\\(\\) or 'range' in k.lower\\(\\)]\\)\")"
+    ],
+    "additionalDirectories": [
+      "d:\\USERS\\Desktop\\API\\whatsapp-service\\src"
+    ]
+  }
+}

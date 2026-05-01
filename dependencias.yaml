@@ -1,0 +1,123 @@
+# Infraestrutura: PostgreSQL, Redis, RabbitMQ e Convex
+# Suba primeiro: docker compose -f dependencias.yaml up -d --build
+# A API usa este arquivo como base via rede externa "api_net"
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: ConvexPostgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: convex
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-convexsecret}
+      POSTGRES_DB: api_local
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    networks:
+      - api_net
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U convex -d api_local"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
+
+  redis:
+    image: redis:7-alpine
+    container_name: WhatsAppRedis
+    restart: unless-stopped
+    command: redis-server --requirepass ${REDIS_PASSWORD:-redissecret} --appendonly yes
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    networks:
+      - api_net
+    healthcheck:
+      test: ["CMD", "redis-cli", "-a", "${REDIS_PASSWORD:-redissecret}", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  rabbitmq:
+    image: rabbitmq:3.13-management-alpine
+    container_name: WhatsAppRabbitMQ
+    restart: unless-stopped
+    environment:
+      RABBITMQ_DEFAULT_USER: ${RABBITMQ_USER:-rabbit}
+      RABBITMQ_DEFAULT_PASS: ${RABBITMQ_PASSWORD:-rabbitsecret}
+      RABBITMQ_DEFAULT_VHOST: whatsapp
+    ports:
+      - "5672:5672"
+      - "15672:15672"
+    volumes:
+      - rabbitmq_data:/var/lib/rabbitmq
+    networks:
+      - api_net
+    healthcheck:
+      test: rabbitmq-diagnostics -q ping
+      interval: 10s
+      timeout: 10s
+      retries: 10
+      start_period: 20s
+
+  convex-backend:
+    image: ghcr.io/get-convex/convex-backend:latest
+    container_name: ConvexBackend
+    stop_grace_period: 10s
+    stop_signal: SIGINT
+    ports:
+      - "3210:3210"
+      - "3211:3211"
+    environment:
+      - ACTIONS_USER_TIMEOUT_SECS
+      - APPLICATION_MAX_CONCURRENT_MUTATIONS=16
+      - APPLICATION_MAX_CONCURRENT_NODE_ACTIONS=16
+      - APPLICATION_MAX_CONCURRENT_QUERIES=16
+      - APPLICATION_MAX_CONCURRENT_V8_ACTIONS=16
+      - CONVEX_CLOUD_ORIGIN=${CONVEX_CLOUD_ORIGIN:-http://localhost:3210}
+      - CONVEX_SITE_ORIGIN=${CONVEX_SITE_ORIGIN:-http://localhost:3211}
+      - DISABLE_BEACON=true
+      - DISABLE_METRICS_ENDPOINT=true
+      - DOCUMENT_RETENTION_DELAY=172800
+      - DO_NOT_REQUIRE_SSL=true
+      - INSTANCE_NAME=${INSTANCE_NAME:-api-local}
+      - INSTANCE_SECRET=${INSTANCE_SECRET}
+      - POSTGRES_URL=postgresql://convex:${POSTGRES_PASSWORD:-convexsecret}@postgres:5432
+      - RUST_LOG=info
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      - api_net
+    healthcheck:
+      test: curl -f http://127.0.0.1:3210/version
+      interval: 5s
+      start_period: 15s
+
+  convex-dashboard:
+    image: ghcr.io/get-convex/convex-dashboard:latest
+    container_name: ConvexDashboard
+    stop_grace_period: 10s
+    stop_signal: SIGINT
+    ports:
+      - "6791:6791"
+    environment:
+      - NEXT_PUBLIC_DEPLOYMENT_URL=${CONVEX_CLOUD_ORIGIN:-http://localhost:3210}
+    depends_on:
+      convex-backend:
+        condition: service_healthy
+    networks:
+      - api_net
+
+networks:
+  api_net:
+    name: api_net
+    driver: bridge
+
+volumes:
+  postgres_data:
+  redis_data:
+  rabbitmq_data:

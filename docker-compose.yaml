@@ -1,0 +1,59 @@
+# WhatsApp API
+# Requer a dependencias rodando
+# Suba a API: docker compose up -d --build
+
+services:
+  dashboard:
+    build:
+      context: ./dashboard
+      dockerfile: Dockerfile
+    container_name: KonectaDashboard
+    restart: unless-stopped
+    ports:
+      - "5000:80"
+    networks:
+      - api_net
+    healthcheck:
+      test: wget -qO- http://localhost:80 || exit 1
+      interval: 15s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+
+  whatsapp-api:
+    build:
+      context: ./whatsapp-service
+      dockerfile: Dockerfile
+    container_name: WhatsAppAPI
+    restart: unless-stopped
+    ports:
+      - "4000:4000"
+    env_file:
+      - path: .env
+        required: false
+      - path: .env.local
+        required: true
+    environment:
+      - NODE_ENV=production
+      - PORT=4000
+      - REDIS_URL=redis://:${REDIS_PASSWORD:-redissecret}@redis:6379
+      - RABBITMQ_URL=amqp://${RABBITMQ_USER:-rabbit}:${RABBITMQ_PASSWORD:-rabbitsecret}@rabbitmq:5672/whatsapp
+      - CONVEX_URL=http://convex-backend:3210
+    volumes:
+      - sessions_data:/app/sessions
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    networks:
+      - api_net
+    healthcheck:
+      test: curl -f http://localhost:4000/health
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+
+networks:
+  api_net:
+    external: true
+
+volumes:
+  sessions_data:

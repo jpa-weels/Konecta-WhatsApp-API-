@@ -1,0 +1,22 @@
+# Secrets — never commit
+.env
+.env.local
+.env.*.local
+*.env
+
+# WhatsApp session files (contain auth credentials)
+sessions/
+whatsapp-service/sessions/
+
+# Dependencies
+node_modules/
+**/node_modules/
+
+# Build outputs
+dist/
+**/dist/
+dashboard/dist/
+
+# Logs
+*.log
+logs/
