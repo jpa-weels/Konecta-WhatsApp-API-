@@ -1,6 +1,4 @@
-<div align="center">
-  <img src="Konecta.png" alt="Konecta API Logo" />
-</div>
+![Konecta API Logo](./Konecta.png)
 
 # Konecta API 🚀
 
