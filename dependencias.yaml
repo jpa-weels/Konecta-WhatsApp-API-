@@ -9,7 +9,7 @@ services:
     restart: unless-stopped
     environment:
       POSTGRES_USER: convex
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-convexsecret}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-05973401c17119eda312}
       POSTGRES_DB: api_local
     ports:
       - "5432:5432"
@@ -77,13 +77,13 @@ services:
       - APPLICATION_MAX_CONCURRENT_NODE_ACTIONS=16
       - APPLICATION_MAX_CONCURRENT_QUERIES=16
       - APPLICATION_MAX_CONCURRENT_V8_ACTIONS=16
-      - CONVEX_CLOUD_ORIGIN=${CONVEX_CLOUD_ORIGIN:-http://localhost:3210}
-      - CONVEX_SITE_ORIGIN=${CONVEX_SITE_ORIGIN:-http://localhost:3211}
+      - CONVEX_CLOUD_ORIGIN=${CONVEX_URL:-http://localhost:3210}
+      - CONVEX_SITE_ORIGIN=${CONVEX_SITE_URL:-http://localhost:3211}
       - DISABLE_BEACON=true
       - DISABLE_METRICS_ENDPOINT=true
       - DOCUMENT_RETENTION_DELAY=172800
       - DO_NOT_REQUIRE_SSL=true
-      - INSTANCE_NAME=${INSTANCE_NAME:-api-local}
+      - INSTANCE_NAME=${INSTANCE_NAME}
       - INSTANCE_SECRET=${INSTANCE_SECRET}
       - POSTGRES_URL=postgresql://convex:${POSTGRES_PASSWORD:-convexsecret}@postgres:5432
       - RUST_LOG=info
@@ -105,7 +105,7 @@ services:
     ports:
       - "6791:6791"
     environment:
-      - NEXT_PUBLIC_DEPLOYMENT_URL=${CONVEX_CLOUD_ORIGIN:-http://localhost:3210}
+      - NEXT_PUBLIC_DEPLOYMENT_URL=${CONVEX_URL:-http://localhost:3210}
     depends_on:
       convex-backend:
         condition: service_healthy

@@ -1,0 +1,177 @@
+PREPARANDO A VPS
+
+sudo timedatectl set-timezone America/Sao_Paulo
+
+sudo ln -sf /usr/share/zoneinfo/America/Sao_Paulo /etc/localtime
+
+timedatectl
+
+
+sudo apt update
+
+sudo apt install -y ca-certificates curl gnupg
+
+sudo install -m 0755 -d /etc/apt/keyrings
+curl -fsSL https://download.docker.com/linux/ubuntu/gpg | sudo tee /etc/apt/keyrings/docker.asc > /dev/null
+sudo chmod a+r /etc/apt/keyrings/docker.asc
+
+sudo install -m 0755 -d /etc/apt/keyrings
+curl -fsSL https://download.docker.com/linux/ubuntu/gpg | sudo tee /etc/apt/keyrings/docker.asc > /dev/null
+sudo chmod a+r /etc/apt/keyrings/docker.asc
+
+echo \
+  "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.asc] https://download.docker.com/linux/ubuntu \
+  $(. /etc/os-release && echo "$VERSION_CODENAME") stable" | \
+  sudo tee /etc/apt/sources.list.d/docker.list > /dev/null
+
+sudo apt update
+sudo apt install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
+
+
+docker --version
+docker compose version
+
+
+
+
+# hetzner.com - VPS
+# cloudflare.com Gerenciamento de dominio 
+
+✅ OPÇÃO 1 — NGINX como Proxy Reverso (recomendado)
+Ideal se você controla o servidor onde está o domínio.
+🔹 1. Pré-requisitos
+Domínio menflix.com.br apontando para o IP do servidor proxy
+
+Ubuntu/Debian (exemplo)
+
+sudo apt update
+sudo apt install nginx -y
+---------------------------------------------------------------------
+sudo nano /etc/nginx/sites-available/menflix.com.br
+
+server {
+    listen 80;
+    server_name menflix.com.br;
+
+    client_max_body_size 20M;
+
+    location / {
+        proxy_pass http://127.0.0.1:5000;
+        proxy_http_version 1.1;
+
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection "upgrade";
+
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+
+        proxy_read_timeout 86400;
+        proxy_send_timeout 86400;
+    }
+}
+
+server {
+    listen 80;
+    server_name api.menflix.com.br;
+
+    client_max_body_size 20M;
+
+    location / {
+        proxy_pass http://127.0.0.1:4000;
+        proxy_http_version 1.1;
+
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection "upgrade";
+
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+
+        proxy_read_timeout 86400;
+        proxy_send_timeout 86400;
+    }
+}
+
+server {
+    listen 80;
+    server_name db.menflix.com.br;
+
+    client_max_body_size 20M;
+
+    location / {
+        proxy_pass http://127.0.0.1:3210;
+        proxy_http_version 1.1;
+
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection "upgrade";
+
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+
+        proxy_read_timeout 86400;
+        proxy_send_timeout 86400;
+    }
+}
+
+server {
+    listen 80;
+    server_name proxy.menflix.com.br;
+
+    client_max_body_size 20M;
+
+    location / {
+        proxy_pass http://127.0.0.1:3211;
+        proxy_http_version 1.1;
+
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection "upgrade";
+
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+
+        proxy_read_timeout 86400;
+        proxy_send_timeout 86400;
+    }
+}
+
+
+
+server {
+    listen 80;
+    server_name convex.menflix.com.br;
+
+    client_max_body_size 20M;
+
+    location / {
+        proxy_pass http://127.0.0.1:6791;
+        proxy_http_version 1.1;
+
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection "upgrade";
+
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+
+        proxy_read_timeout 86400;
+        proxy_send_timeout 86400;
+    }
+}
+-----------------------------------------------------------------------------------------
+
+sudo ln -s /etc/nginx/sites-available/menflix.com.br /etc/nginx/sites-enabled/
+sudo nginx -t
+sudo systemctl reload nginx
+
+-----------------------------------------------------------------------------------------
+
+sudo apt install certbot python3-certbot-nginx -y
+sudo certbot --nginx -d menflix.com.br -d api.menflix.com.br -d db.menflix.com.br -d proxy.menflix.com.br -d convex.menflix.com.br
