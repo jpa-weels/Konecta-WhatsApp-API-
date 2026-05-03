@@ -1,5 +1,6 @@
 import type { Request, Response, NextFunction } from "express";
 import { config } from "../config";
+import { logger } from "../logger";
 
 export function authMiddleware(req: Request, res: Response, next: NextFunction): void {
   const key = req.headers["x-api-key"];
@@ -10,6 +11,7 @@ export function authMiddleware(req: Request, res: Response, next: NextFunction):
   next();
 }
 
-export function errorHandler(err: Error, _req: Request, res: Response, _next: NextFunction): void {
-  res.status(500).json({ error: "Erro interno do servidor" });
+export function errorHandler(err: Error, req: Request, res: Response, _next: NextFunction): void {
+  logger.error({ err, method: req.method, url: req.url }, "Erro interno não tratado");
+  res.status(500).json({ error: "Erro interno do servidor", message: err.message });
 }

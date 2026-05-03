@@ -6,19 +6,28 @@ import { Button } from "@/components/ui/Button";
 import { Input } from "@/components/ui/Input";
 import { cn } from "@/lib/utils";
 import { DEFAULT_API_URL } from "@/config";
-import type { InstanceConfig } from "@/types";
 import logoImage from "@/image/k.png";
 
 function getSavedApiUrl(): string {
+  // 1. Sessão ativa (re-login após expirar)
   try {
-    const instances: InstanceConfig[] = JSON.parse(
-      localStorage.getItem("whatsapp-instances") || "[]"
-    );
-    // Prioridade: 1º instância salva → 2º variável de ambiente → 3º localhost (fallback final)
-    return instances[0]?.apiUrl ?? DEFAULT_API_URL;
-  } catch {
-    return DEFAULT_API_URL;
-  }
+    const raw = sessionStorage.getItem("konecta:auth");
+    if (raw) {
+      const state = JSON.parse(raw) as { apiUrl?: string };
+      if (state.apiUrl) return state.apiUrl;
+    }
+  } catch { /* ignore */ }
+  // 2. Variável de ambiente injetada no build (VITE_API_URL)
+  if (DEFAULT_API_URL && !DEFAULT_API_URL.includes("localhost")) return DEFAULT_API_URL;
+  // 3. Fallback legado: instâncias salvas antes da migração para Convex
+  try {
+    const raw = localStorage.getItem("whatsapp-instances");
+    if (raw) {
+      const instances = JSON.parse(raw) as Array<{ apiUrl?: string }>;
+      if (instances[0]?.apiUrl) return instances[0].apiUrl;
+    }
+  } catch { /* ignore */ }
+  return DEFAULT_API_URL;
 }
 
 export default function LoginPage() {

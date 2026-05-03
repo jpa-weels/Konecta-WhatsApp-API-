@@ -1,5 +1,6 @@
-import { Router, type Request, type Response } from "express";
+import { Router, type Request, type Response, type NextFunction } from "express";
 import { body, param, validationResult } from "express-validator";
+import rateLimit from "express-rate-limit";
 import { v4 as uuidv4 } from "uuid";
 import {
   createSession,
@@ -11,18 +12,25 @@ import {
 import { sendTextMessage, sendOutboundMessage, assertSafeUrl } from "../whatsapp/handlers";
 import {
   getQR,
-  getSessionStatus,
   getSessionPhone,
-  listActiveSessions,
   setSessionName,
 } from "../cache/redis";
 import { publishOutbound, type OutboundMessage } from "../queue/rabbitmq";
-import { saveMessage, getSessionData, saveSession, createWebhook, updateWebhookRecord, deleteWebhook, listWebhooks, getMessageAnalytics, purgeDatabase } from "../convex/client";
+import { getSessionData, saveSession, createWebhook, updateWebhookRecord, deleteWebhook, listWebhooks, getMessageAnalytics, purgeDatabase, removeSession, listAllSessions } from "../convex/client";
 import { invalidateWebhooksCache } from "../cache/redis";
 import { collectSystemMetrics } from "../metrics/system";
 import { logger } from "../logger";
 
 const router = Router();
+
+const sendLimiter = rateLimit({
+  windowMs: 60_000,
+  max: 300,
+  standardHeaders: true,
+  legacyHeaders: false,
+  keyGenerator: (req) => (req.headers["x-api-key"] as string) ?? req.ip ?? "unknown",
+  message: { error: "Limite de envio de mensagens atingido. Tente novamente em breve." },
+});
 
 function validate(req: Request, res: Response): boolean {
   const errors = validationResult(req);
@@ -33,10 +41,20 @@ function validate(req: Request, res: Response): boolean {
   return true;
 }
 
+// Formato seguro para sessionId: alfanumérico + hífen + underscore, máx 64 chars
+const SESSION_ID_REGEX = /^[a-zA-Z0-9_-]{1,64}$/;
+const validSessionIdParam = param("id")
+  .matches(SESSION_ID_REGEX)
+  .withMessage("sessionId inválido — use apenas letras, números, - e _");
+
 // ─── Sessões ──────────────────────────────────────────────────────────────────
 
 /** POST /sessions — cria nova sessão */
-router.post("/sessions", async (req: Request, res: Response) => {
+router.post(
+  "/sessions",
+  body("sessionId").optional().matches(SESSION_ID_REGEX).withMessage("sessionId inválido — use apenas letras, números, - e _"),
+  async (req: Request, res: Response) => {
+  if (!validate(req, res)) return;
   const sessionId: string = req.body.sessionId ?? uuidv4();
   const webhookUrl: string | undefined = req.body.webhookUrl;
   const name: string | undefined = req.body.name;
@@ -53,27 +71,36 @@ router.post("/sessions", async (req: Request, res: Response) => {
 
 /** GET /sessions — lista sessões ativas */
 router.get("/sessions", async (_req: Request, res: Response) => {
-  const sessions = await listActiveSessions();
+  const sessions = await listAllSessions();
   const details = await Promise.all(
-    sessions.map(async (id) => ({ id, status: await getSessionStatus(id) })),
+    sessions.map(async (s: any) => ({
+      id: s.sessionId,
+      status: s.status,
+      name: s.name,
+      phone: s.phone,
+    }))
   );
   res.json({ sessions: details });
 });
 
 /** GET /sessions/:id/status */
-router.get("/sessions/:id/status", async (req: Request, res: Response) => {
+router.get("/sessions/:id/status", validSessionIdParam, async (req: Request, res: Response) => {
+  if (!validate(req, res)) return;
   const id = req.params.id as string;
-  const status = await getSessionStatus(id);
-  if (!status) {
+  // Status vem do Convex (fonte de verdade única)
+  const session = await getSessionData(id);
+  if (!session) {
     res.status(404).json({ error: "Sessão não encontrada" });
     return;
   }
+  // Redis ainda útil para leitura rápida do phone (cache efêmero)
   const phone = await getSessionPhone(id);
-  res.json({ sessionId: id, status, phone: phone ?? undefined });
+  res.json({ sessionId: id, status: session.status, phone: phone ?? session.phone ?? undefined });
 });
 
 /** GET /sessions/:id/qr — retorna o QR code em base64 */
-router.get("/sessions/:id/qr", async (req: Request, res: Response) => {
+router.get("/sessions/:id/qr", validSessionIdParam, async (req: Request, res: Response) => {
+  if (!validate(req, res)) return;
   const id = req.params.id as string;
   const qr = await getQR(id);
   if (!qr) {
@@ -84,7 +111,8 @@ router.get("/sessions/:id/qr", async (req: Request, res: Response) => {
 });
 
 /** POST /sessions/:id/restart — reinicia sessão sem logout */
-router.post("/sessions/:id/restart", async (req: Request, res: Response) => {
+router.post("/sessions/:id/restart", validSessionIdParam, async (req: Request, res: Response) => {
+  if (!validate(req, res)) return;
   const id = req.params.id as string;
   try {
     await restartSession(id);
@@ -95,10 +123,12 @@ router.post("/sessions/:id/restart", async (req: Request, res: Response) => {
 });
 
 /** DELETE /sessions/:id — desconecta sessão */
-router.delete("/sessions/:id", async (req: Request, res: Response) => {
+router.delete("/sessions/:id", validSessionIdParam, async (req: Request, res: Response) => {
+  if (!validate(req, res)) return;
   const id = req.params.id as string;
   try {
     await disconnectSession(id);
+    await removeSession(id);
     res.json({ message: "Sessão desconectada" });
   } catch (err: any) {
     res.status(404).json({ error: err.message });
@@ -107,6 +137,7 @@ router.delete("/sessions/:id", async (req: Request, res: Response) => {
 /** PUT /sessions/:id/webhook — atualiza o webhookUrl e eventos da sessão */
 router.put(
   "/sessions/:id/webhook",
+  validSessionIdParam,
   body("webhookUrl").isURL().withMessage("Deve ser uma URL válida"),
   body("webhookEvents").optional().isArray().withMessage("Deve ser um array de strings"),
   async (req: Request, res: Response) => {
@@ -142,7 +173,7 @@ router.post(
   body("events").isArray().withMessage("Deve ser um array de strings"),
   body("sessionIds").isArray().withMessage("Deve ser um array de sessionIds"),
   body("name").optional().isString(),
-  async (req: Request, res: Response) => {
+  async (req: Request, res: Response, next: NextFunction) => {
     if (!validate(req, res)) return;
     const { url, events, sessionIds, name } = req.body;
     try {
@@ -151,9 +182,13 @@ router.post(
       res.status(400).json({ error: err.message });
       return;
     }
-    const id = await createWebhook({ url, events, sessionIds, name });
-    await Promise.all(sessionIds.map((sid: string) => invalidateWebhooksCache(sid)));
-    res.status(201).json({ id });
+    try {
+      const id = await createWebhook({ url, events, sessionIds, name });
+      await Promise.all(sessionIds.map((sid: string) => invalidateWebhooksCache(sid)));
+      res.status(201).json({ id });
+    } catch (err) {
+      next(err);
+    }
   }
 );
 
@@ -204,17 +239,13 @@ router.delete("/webhooks/:id", async (req: Request, res: Response) => {
 
 /** GET /analytics */
 router.get("/analytics", async (_req: Request, res: Response) => {
-  const [msgStats, sessionIds, webhooks] = await Promise.all([
+  const [msgStats, sessions, webhooks] = await Promise.all([
     getMessageAnalytics(30),
-    listActiveSessions(),
+    listAllSessions(),
     listWebhooks(),
   ]);
 
-  const sessionStatuses = await Promise.all(
-    sessionIds.map(async (id) => ({ id, status: await getSessionStatus(id) }))
-  );
-
-  const byStatus = sessionStatuses.reduce((acc, s) => {
+  const byStatus = sessions.reduce((acc: Record<string, number>, s: any) => {
     const k = s.status ?? "unknown";
     acc[k] = (acc[k] || 0) + 1;
     return acc;
@@ -223,7 +254,7 @@ router.get("/analytics", async (_req: Request, res: Response) => {
   res.json({
     messages: msgStats,
     sessions: {
-      total: sessionIds.length,
+      total: sessions.length,
       connected: byStatus["connected"] || 0,
       byStatus,
     },
@@ -241,11 +272,13 @@ router.get("/analytics", async (_req: Request, res: Response) => {
 /** POST /messages/send — envia mensagem imediata (sessão já conectada) */
 router.post(
   "/messages/send",
+  sendLimiter,
   body("sessionId").isString().notEmpty(),
   body("to").isString().notEmpty(),
   body("text").optional().isString(),
   body("mediaUrl").optional().isURL(),
   body("mediaType").optional().isIn(["image", "video", "audio", "document"]),
+  body("caption").optional().isString(),
   async (req: Request, res: Response) => {
     if (!validate(req, res)) return;
 
@@ -260,20 +293,6 @@ router.post(
     try {
       const msg: OutboundMessage = { sessionId, to, text, mediaUrl, mediaType, caption };
       await sendOutboundMessage(sock, msg);
-
-      const phone = to.split("@")[0];
-      await saveMessage({
-        sessionId,
-        messageId: uuidv4(),
-        from: sessionId,
-        to,
-        type: mediaUrl ? mediaType ?? "image" : "text",
-        text,
-        timestamp: Math.floor(Date.now() / 1000),
-        direction: "outbound",
-        status: "sent",
-      });
-
       res.json({ message: "Mensagem enviada" });
     } catch (err: any) {
       logger.error({ err, sessionId, to }, "Erro ao enviar mensagem");
@@ -285,10 +304,13 @@ router.post(
 /** POST /messages/queue — enfileira mensagem no RabbitMQ */
 router.post(
   "/messages/queue",
+  sendLimiter,
   body("sessionId").isString().notEmpty(),
   body("to").isString().notEmpty(),
   body("text").optional().isString(),
   body("mediaUrl").optional().isURL(),
+  body("mediaType").optional().isIn(["image", "video", "audio", "document"]),
+  body("caption").optional().isString(),
   async (req: Request, res: Response) => {
     if (!validate(req, res)) return;
 
@@ -308,16 +330,30 @@ router.post(
 // ─── Admin ────────────────────────────────────────────────────────────────────────────
 
 /** DELETE /admin/purge — apaga todos os dados do Convex (mensagens, contatos, sessões, webhooks) */
-router.delete("/admin/purge", async (_req: Request, res: Response) => {
-  try {
-    const counts = await purgeDatabase();
-    logger.warn({ counts }, "Base de dados purgada via admin endpoint");
-    res.json({ message: "Base de dados limpa com sucesso", counts });
-  } catch (err: any) {
-    logger.error({ err }, "Erro ao purgar base de dados");
-    res.status(500).json({ error: err.message });
-  }
-});
+router.delete(
+  "/admin/purge",
+  body("confirm").equals("PURGE_ALL").withMessage("Envie { \"confirm\": \"PURGE_ALL\" } para confirmar"),
+  async (req: Request, res: Response) => {
+    if (!validate(req, res)) return;
+    try {
+      const totals: Record<string, number> = {};
+      // Loop até zerar — cada chamada deleta até 500 docs/tabela (limite Convex)
+      let hasMore = true;
+      while (hasMore) {
+        const counts = await purgeDatabase();
+        for (const [table, n] of Object.entries(counts)) {
+          totals[table] = (totals[table] ?? 0) + n;
+        }
+        hasMore = Object.values(counts).some((n) => n > 0);
+      }
+      logger.warn({ totals }, "Base de dados purgada via admin endpoint");
+      res.json({ message: "Base de dados limpa com sucesso", counts: totals });
+    } catch (err: any) {
+      logger.error({ err }, "Erro ao purgar base de dados");
+      res.status(500).json({ error: err.message });
+    }
+  },
+);
 
 /** GET /admin/metrics — métricas do sistema: CPU, memória, disco, containers Docker */
 router.get("/admin/metrics", async (_req: Request, res: Response) => {

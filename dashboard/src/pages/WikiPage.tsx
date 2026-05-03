@@ -1,5 +1,6 @@
 import { useState, useRef } from "react";
 import { DEFAULT_API_URL } from "@/config";
+import { useAuth } from "@/auth/AuthContext";
 import {
   BookOpen,
   Terminal,
@@ -13,6 +14,7 @@ import {
   Circle,
   Webhook,
   BarChart3,
+  Shield,
 } from "lucide-react";
 import { cn, copyToClipboard } from "@/lib/utils";
 
@@ -178,49 +180,88 @@ function Section({
 
 // ─── Data ─────────────────────────────────────────────────────────────────────
 
-const BASE = DEFAULT_API_URL;
-const KEY = "sua_api_key";
-
-const SESSIONS: Endpoint[] = [
+const SESSIONS = (BASE: string, KEY: string): Endpoint[] => [
   {
     method: "POST",
     path: "/sessions",
-    description: "Cria uma nova sessão WhatsApp. Após criada, use o endpoint de QR para obter o código de vinculação.",
+    description: "Cria uma nova sessão WhatsApp e salva no Convex. O QR code NÃO está disponível imediatamente — o Baileys precisa de ~1-2s para conectar. Fluxo: POST → poll GET /status até qr_ready → GET /qr.",
     body: `{
-  "sessionId": "minha-sessao",   // opcional — gera UUID se omitido
-  "name":      "Atendimento",    // opcional — nome amigável da sessão
-  "webhookUrl": "https://..."    // opcional — URL para receber eventos
+  "sessionId":  "minha-sessao",   // opcional — gera UUID se omitido
+  "name":       "Atendimento",    // opcional — nome amigável da sessão
+  "webhookUrl": "https://..."     // opcional — URL para receber eventos
 }`,
     response: `{
   "sessionId": "minha-sessao",
   "message": "Sessão criada, aguarde o QR code"
-}`,
+}
+
+// Fluxo completo para obter o QR:
+// 1. POST /sessions          → { sessionId }
+// 2. GET  /sessions/:id/status (poll a cada 2s até status = "qr_ready")
+// 3. GET  /sessions/:id/qr   → { qr: "data:image/png;base64,..." }`,
     codes: {
-      curl: `curl -X POST ${BASE}/api/v1/sessions \\
+      curl: `# Com nome e ID automático (igual ao painel)
+curl -X POST ${BASE}/api/v1/sessions \\
   -H "X-API-Key: ${KEY}" \\
   -H "Content-Type: application/json" \\
-  -d '{"sessionId": "minha-sessao"}'`,
-      nodejs: `const res = await fetch('${BASE}/api/v1/sessions', {
+  -d '{"name": "Atendimento"}'
+
+# Com nome e ID customizado
+curl -X POST ${BASE}/api/v1/sessions \\
+  -H "X-API-Key: ${KEY}" \\
+  -H "Content-Type: application/json" \\
+  -d '{"sessionId": "atendimento-principal", "name": "Atendimento", "webhookUrl": "https://meusite.com/webhook"}'
+
+# Resposta
+# { "sessionId": "uuid-gerado-automaticamente", "message": "Sessão criada, aguarde o QR code" }`,
+      nodejs: `// Com nome e ID automático (igual ao painel)
+const res = await fetch('${BASE}/api/v1/sessions', {
   method: 'POST',
   headers: {
     'X-API-Key': '${KEY}',
     'Content-Type': 'application/json',
   },
-  body: JSON.stringify({ sessionId: 'minha-sessao' }),
+  body: JSON.stringify({ name: 'Atendimento' }),
 });
-const data = await res.json();
-console.log(data);
-// { sessionId: 'minha-sessao', message: 'Sessão criada...' }`,
+const { sessionId } = await res.json();
+console.log('Sessão criada:', sessionId);
+// { sessionId: 'a3f2c1d0-...', message: 'Sessão criada, aguarde o QR code' }
+
+// Com nome e ID customizado + webhook
+await fetch('${BASE}/api/v1/sessions', {
+  method: 'POST',
+  headers: { 'X-API-Key': '${KEY}', 'Content-Type': 'application/json' },
+  body: JSON.stringify({
+    sessionId:  'atendimento-principal',
+    name:       'Atendimento',
+    webhookUrl: 'https://meusite.com/webhook',
+  }),
+});`,
       python: `import requests
 
+# Com nome e ID automático (igual ao painel)
 response = requests.post(
     '${BASE}/api/v1/sessions',
     headers={'X-API-Key': '${KEY}'},
-    json={'sessionId': 'minha-sessao'}
+    json={'name': 'Atendimento'}
 )
-print(response.json())
-# {'sessionId': 'minha-sessao', 'message': 'Sessão criada...'}`,
+data = response.json()
+session_id = data['sessionId']
+print('Sessão criada:', session_id)
+# {'sessionId': 'a3f2c1d0-...', 'message': 'Sessão criada, aguarde o QR code'}
+
+# Com nome e ID customizado + webhook
+requests.post(
+    '${BASE}/api/v1/sessions',
+    headers={'X-API-Key': '${KEY}'},
+    json={
+        'sessionId':  'atendimento-principal',
+        'name':       'Atendimento',
+        'webhookUrl': 'https://meusite.com/webhook',
+    }
+)`,
       php: `<?php
+// Com nome e ID automático (igual ao painel)
 $ch = curl_init('${BASE}/api/v1/sessions');
 curl_setopt_array($ch, [
     CURLOPT_POST           => true,
@@ -229,8 +270,18 @@ curl_setopt_array($ch, [
         'X-API-Key: ${KEY}',
         'Content-Type: application/json',
     ],
-    CURLOPT_POSTFIELDS => json_encode(['sessionId' => 'minha-sessao']),
+    CURLOPT_POSTFIELDS => json_encode(['name' => 'Atendimento']),
 ]);
+$data     = json_decode(curl_exec($ch), true);
+$sessionId = $data['sessionId']; // UUID gerado automaticamente
+echo 'Sessão: ' . $sessionId . PHP_EOL;
+
+// Com nome e ID customizado + webhook
+curl_setopt($ch, CURLOPT_POSTFIELDS, json_encode([
+    'sessionId'  => 'atendimento-principal',
+    'name'       => 'Atendimento',
+    'webhookUrl' => 'https://meusite.com/webhook',
+]));
 $data = json_decode(curl_exec($ch), true);
 print_r($data);`,
       go: `package main
@@ -242,32 +293,60 @@ import (
     "net/http"
 )
 
-func main() {
-    body, _ := json.Marshal(map[string]string{
-        "sessionId": "minha-sessao",
-    })
-    req, _ := http.NewRequest("POST", "${BASE}/api/v1/sessions", bytes.NewBuffer(body))
-    req.Header.Set("X-API-Key", "${KEY}")
+func createSession(base, apiKey, name, sessionId, webhookUrl string) string {
+    payload := map[string]string{"name": name}
+    if sessionId != "" {
+        payload["sessionId"] = sessionId
+    }
+    if webhookUrl != "" {
+        payload["webhookUrl"] = webhookUrl
+    }
+    body, _ := json.Marshal(payload)
+
+    req, _ := http.NewRequest("POST", base+"/api/v1/sessions", bytes.NewBuffer(body))
+    req.Header.Set("X-API-Key", apiKey)
     req.Header.Set("Content-Type", "application/json")
 
-    client := &http.Client{}
-    resp, _ := client.Do(req)
+    resp, _ := (&http.Client{}).Do(req)
     defer resp.Body.Close()
 
     var result map[string]any
     json.NewDecoder(resp.Body).Decode(&result)
-    fmt.Println(result)
+    return result["sessionId"].(string)
+}
+
+func main() {
+    base   := "${BASE}"
+    apiKey := "${KEY}"
+
+    // ID automático (igual ao painel)
+    id := createSession(base, apiKey, "Atendimento", "", "")
+    fmt.Println("Sessão criada:", id)
+
+    // ID customizado com webhook
+    id2 := createSession(base, apiKey, "Suporte", "suporte-01", "https://meusite.com/webhook")
+    fmt.Println("Sessão criada:", id2)
 }`,
     },
   },
   {
     method: "GET",
     path: "/sessions",
-    description: "Lista todas as sessões ativas no servidor com seus respectivos status.",
+    description: "Lista todas as sessões cadastradas no banco de dados (Convex) com status em tempo real via Redis. Inclui nome e telefone quando disponíveis.",
     response: `{
   "sessions": [
-    { "id": "minha-sessao", "status": "connected" },
-    { "id": "outra-sessao", "status": "qr_ready" }
+    {
+      "id": "minha-sessao",
+      "status": "connected",
+      "name": "Atendimento",
+      "phone": "5511999887766"
+    },
+    {
+      "id": "outra-sessao",
+      "status": "qr_ready",
+      "name": "Suporte",
+      "phone": null
+    }
   ]
 }`,
     codes: {
@@ -308,12 +387,19 @@ fmt.Println(result["sessions"])`,
   {
     method: "GET",
     path: "/sessions/:id/status",
-    description: "Retorna o status atual de uma sessão. Possíveis valores: connecting, qr_ready, connected, disconnected.",
+    description: "Retorna o status em tempo real via Redis. Se o Redis não tiver o dado (ex: após restart do serviço), faz fallback automático ao Convex. Status possíveis: initializing, connecting, qr_ready, connected, disconnected.",
     response: `{
   "sessionId": "minha-sessao",
-  "status": "connected",
-  "phone": "5511999887766"   // presente quando conectado
-}`,
+  "status":    "connected",
+  "phone":     "5511999887766"   // presente quando conectado
+}
+
+// Status possíveis:
+// "initializing" — sessão criada, aguardando Baileys iniciar
+// "connecting"   — tentando conectar ao WhatsApp
+// "qr_ready"     — QR disponível para scan (GET /sessions/:id/qr)
+// "connected"    — número vinculado e online
+// "disconnected" — sessão perdida ou deslogada`,
     codes: {
       curl: `curl ${BASE}/api/v1/sessions/minha-sessao/status \\
   -H "X-API-Key: ${KEY}"`,
@@ -570,7 +656,7 @@ fmt.Println(result["message"])`,
   },
 ];
 
-const WEBHOOKS: Endpoint[] = [
+const WEBHOOKS = (BASE: string, KEY: string): Endpoint[] => [
   {
     method: "GET",
     path: "/webhooks",
@@ -812,7 +898,7 @@ fmt.Println(result["message"])`,
   },
 ];
 
-const ANALYTICS: Endpoint[] = [
+const ANALYTICS = (BASE: string, KEY: string): Endpoint[] => [
   {
     method: "GET",
     path: "/analytics",
@@ -879,14 +965,14 @@ fmt.Println("Total mensagens:", msgs["total"])`,
   },
 ];
 
-const MESSAGES: Endpoint[] = [
+const MESSAGES = (BASE: string, KEY: string): Endpoint[] => [
   {
     method: "POST",
     path: "/messages/send",
     description: "Envia uma mensagem imediatamente. A sessão deve estar com status connected. Suporta texto, imagem, vídeo, áudio e documento.",
     body: `{
   "sessionId": "minha-sessao",      // obrigatório
-  "to":        "5511999887766",     // obrigatório — número ou JID (@s.whatsapp.net)
+  "to":        "5511999887766@s.whatsapp.net",     // obrigatório — número ou JID (@s.whatsapp.net)
   "text":      "Olá, tudo bem?",    // texto da mensagem (opcional se usar mídia)
   "mediaUrl":  "https://...",       // URL da mídia (opcional)
   "mediaType": "image",             // image | video | audio | document
@@ -902,7 +988,7 @@ curl -X POST ${BASE}/api/v1/messages/send \\
   -H "Content-Type: application/json" \\
   -d '{
     "sessionId": "minha-sessao",
-    "to": "5511999887766",
+    "to": "5511999887766@s.whatsapp.net",
     "text": "Olá, tudo bem?"
   }'
 
@@ -912,7 +998,7 @@ curl -X POST ${BASE}/api/v1/messages/send \\
   -H "Content-Type: application/json" \\
   -d '{
     "sessionId": "minha-sessao",
-    "to": "5511999887766",
+    "to": "5511999887766@s.whatsapp.net",
     "mediaUrl": "https://example.com/foto.jpg",
     "mediaType": "image",
     "caption": "Confira nossa promoção!"
@@ -926,7 +1012,7 @@ await fetch('${BASE}/api/v1/messages/send', {
   },
   body: JSON.stringify({
     sessionId: 'minha-sessao',
-    to: '5511999887766',
+    to: '5511999887766@s.whatsapp.net',
     text: 'Olá, tudo bem?',
   }),
 });
@@ -940,7 +1026,7 @@ await fetch('${BASE}/api/v1/messages/send', {
   },
   body: JSON.stringify({
     sessionId: 'minha-sessao',
-    to: '5511999887766',
+    to: '5511999887766@s.whatsapp.net',
     mediaUrl: 'https://example.com/foto.jpg',
     mediaType: 'image',
     caption: 'Confira nossa promoção!',
@@ -954,7 +1040,7 @@ requests.post(
     headers={'X-API-Key': '${KEY}'},
     json={
         'sessionId': 'minha-sessao',
-        'to': '5511999887766',
+        'to': '5511999887766@s.whatsapp.net',
         'text': 'Olá, tudo bem?',
     }
 )
@@ -965,7 +1051,7 @@ requests.post(
     headers={'X-API-Key': '${KEY}'},
     json={
         'sessionId': 'minha-sessao',
-        'to': '5511999887766',
+        'to': '5511999887766@s.whatsapp.net',
         'mediaUrl': 'https://example.com/foto.jpg',
         'mediaType': 'image',
         'caption': 'Confira nossa promoção!',
@@ -983,7 +1069,7 @@ curl_setopt_array($ch, [
     ],
     CURLOPT_POSTFIELDS => json_encode([
         'sessionId' => 'minha-sessao',
-        'to'        => '5511999887766',
+        'to'        => '5511999887766@s.whatsapp.net',
         'text'      => 'Olá, tudo bem?',
     ]),
 ]);
@@ -1022,7 +1108,7 @@ func sendMessage(sessionID, to, text string) error {
     description: "Enfileira uma mensagem no RabbitMQ para envio assíncrono. Retorna imediatamente com um correlationId para rastreamento.",
     body: `{
   "sessionId": "minha-sessao",
-  "to":        "5511999887766",
+  "to":        "5511999887766@s.whatsapp.net",
   "text":      "Mensagem em fila"
 }`,
     response: `{
@@ -1035,7 +1121,7 @@ func sendMessage(sessionID, to, text string) error {
   -H "Content-Type: application/json" \\
   -d '{
     "sessionId": "minha-sessao",
-    "to": "5511999887766",
+    "to": "5511999887766@s.whatsapp.net",
     "text": "Mensagem em fila"
   }'`,
       nodejs: `const res = await fetch('${BASE}/api/v1/messages/queue', {
@@ -1046,7 +1132,7 @@ func sendMessage(sessionID, to, text string) error {
   },
   body: JSON.stringify({
     sessionId: 'minha-sessao',
-    to: '5511999887766',
+    to: '5511999887766@s.whatsapp.net',
     text: 'Mensagem em fila',
   }),
 });
@@ -1059,7 +1145,7 @@ response = requests.post(
     headers={'X-API-Key': '${KEY}'},
     json={
         'sessionId': 'minha-sessao',
-        'to': '5511999887766',
+        'to': '5511999887766@s.whatsapp.net',
         'text': 'Mensagem em fila',
     }
 )
@@ -1076,7 +1162,7 @@ curl_setopt_array($ch, [
     ],
     CURLOPT_POSTFIELDS => json_encode([
         'sessionId' => 'minha-sessao',
-        'to'        => '5511999887766',
+        'to'        => '5511999887766@s.whatsapp.net',
         'text'      => 'Mensagem em fila',
     ]),
 ]);
@@ -1084,7 +1170,7 @@ $data = json_decode(curl_exec($ch), true);
 echo $data['correlationId'];`,
       go: `payload, _ := json.Marshal(map[string]string{
     "sessionId": "minha-sessao",
-    "to":        "5511999887766",
+    "to":        "5511999887766@s.whatsapp.net",
     "text":      "Mensagem em fila",
 })
 req, _ := http.NewRequest("POST", "${BASE}/api/v1/messages/queue", bytes.NewBuffer(payload))
@@ -1101,6 +1187,197 @@ fmt.Println("correlationId:", result["correlationId"])`,
   },
 ];
 
+const ADMIN = (BASE: string, KEY: string): Endpoint[] => [
+  {
+    method: "DELETE",
+    path: "/admin/purge",
+    description: "Apaga permanentemente todos os registros do Convex: mensagens, contatos, sessões e webhooks. As sessões WhatsApp ativas NÃO são desconectadas — apenas os dados do banco são removidos. Use com extremo cuidado.",
+    response: `{
+  "message": "Base de dados limpa com sucesso",
+  "counts": {
+    "messages": 1234,
+    "contacts": 56,
+    "sessions": 3,
+    "webhooks": 5
+  }
+}`,
+    codes: {
+      curl: `curl -X DELETE ${BASE}/api/v1/admin/purge \\
+  -H "X-API-Key: ${KEY}"`,
+      nodejs: `const res = await fetch('${BASE}/api/v1/admin/purge', {
+  method: 'DELETE',
+  headers: { 'X-API-Key': '${KEY}' },
+});
+const data = await res.json();
+console.log('Registros removidos:', data.counts);
+// { messages: 1234, contacts: 56, sessions: 3, webhooks: 5 }`,
+      python: `import requests
+
+response = requests.delete(
+    '${BASE}/api/v1/admin/purge',
+    headers={'X-API-Key': '${KEY}'}
+)
+data = response.json()
+print('Registros removidos:', data['counts'])`,
+      php: `<?php
+$ch = curl_init('${BASE}/api/v1/admin/purge');
+curl_setopt_array($ch, [
+    CURLOPT_CUSTOMREQUEST  => 'DELETE',
+    CURLOPT_RETURNTRANSFER => true,
+    CURLOPT_HTTPHEADER     => ['X-API-Key: ${KEY}'],
+]);
+$data = json_decode(curl_exec($ch), true);
+print_r($data['counts']);`,
+      go: `req, _ := http.NewRequest("DELETE", "${BASE}/api/v1/admin/purge", nil)
+req.Header.Set("X-API-Key", "${KEY}")
+
+resp, _ := (&http.Client{}).Do(req)
+defer resp.Body.Close()
+
+var result map[string]any
+json.NewDecoder(resp.Body).Decode(&result)
+fmt.Println("Registros removidos:", result["counts"])`,
+    },
+  },
+  {
+    method: "GET",
+    path: "/admin/metrics",
+    description: "Retorna métricas em tempo real do servidor: uso de CPU, memória RAM, discos e saúde dos containers Docker. Atualiza a cada chamada — recomenda-se poll a cada 15s.",
+    response: `{
+  "cpu": {
+    "usage":  23.5,
+    "cores":  4,
+    "model":  "Intel Core i7",
+    "speed":  2400
+  },
+  "memory": {
+    "total":      8589934592,
+    "used":       3221225472,
+    "free":       5368709120,
+    "usePercent": 37.5
+  },
+  "disks": [
+    {
+      "fs":         "/dev/sda1",
+      "total":      107374182400,
+      "used":       42949672960,
+      "available":  64424509440,
+      "usePercent": 40.0,
+      "mount":      "/"
+    }
+  ],
+  "containers": [
+    {
+      "id":         "abc123",
+      "name":       "whatsapp-api",
+      "image":      "whatsapp-api:latest",
+      "status":     "running",
+      "state":      "running",
+      "health":     "healthy",
+      "cpuPercent": 1.2,
+      "memUsed":    134217728,
+      "memLimit":   536870912,
+      "memPercent": 25.0,
+      "uptime":     "2h 34m"
+    }
+  ],
+  "collectedAt": 1714500000000
+}`,
+    codes: {
+      curl: `curl ${BASE}/api/v1/admin/metrics \\
+  -H "X-API-Key: ${KEY}"`,
+      nodejs: `const res = await fetch('${BASE}/api/v1/admin/metrics', {
+  headers: { 'X-API-Key': '${KEY}' },
+});
+const metrics = await res.json();
+
+console.log(\`CPU: \${metrics.cpu.usage.toFixed(1)}%\`);
+console.log(\`RAM: \${(metrics.memory.usePercent).toFixed(1)}%\`);
+console.log(\`Containers: \${metrics.containers.length}\`);
+
+// Poll a cada 15s
+setInterval(async () => {
+  const m = await fetch('${BASE}/api/v1/admin/metrics', {
+    headers: { 'X-API-Key': '${KEY}' },
+  }).then(r => r.json());
+  console.log('CPU:', m.cpu.usage.toFixed(1) + '%');
+}, 15000);`,
+      python: `import requests
+import time
+
+def get_metrics():
+    response = requests.get(
+        '${BASE}/api/v1/admin/metrics',
+        headers={'X-API-Key': '${KEY}'}
+    )
+    return response.json()
+
+# Coleta única
+metrics = get_metrics()
+print(f"CPU: {round(metrics['cpu']['usage'], 1)}%")
+print(f"RAM: {round(metrics['memory']['usePercent'], 1)}%")
+print(f"Containers: {len(metrics['containers'])}")
+
+# Poll a cada 15s
+while True:
+    m = get_metrics()
+    cpu = round(m['cpu']['usage'], 1)
+    ram = round(m['memory']['usePercent'], 1)
+    print(f"CPU: {cpu}% | RAM: {ram}%")
+    time.sleep(15)`,
+      php: `<?php
+$ch = curl_init('${BASE}/api/v1/admin/metrics');
+curl_setopt_array($ch, [
+    CURLOPT_RETURNTRANSFER => true,
+    CURLOPT_HTTPHEADER     => ['X-API-Key: ${KEY}'],
+]);
+$metrics = json_decode(curl_exec($ch), true);
+
+echo 'CPU: '    . round($metrics['cpu']['usage'], 1)           . '%' . PHP_EOL;
+echo 'RAM: '    . round($metrics['memory']['usePercent'], 1)   . '%' . PHP_EOL;
+echo 'Disco: '  . round($metrics['disks'][0]['usePercent'], 1) . '%' . PHP_EOL;
+
+foreach ($metrics['containers'] as $c) {
+    echo $c['name'] . ': ' . $c['status'] . ' (' . $c['health'] . ')' . PHP_EOL;
+}`,
+      go: `package main
+
+import (
+    "encoding/json"
+    "fmt"
+    "net/http"
+    "time"
+)
+
+func getMetrics(base, apiKey string) map[string]any {
+    req, _ := http.NewRequest("GET", base+"/api/v1/admin/metrics", nil)
+    req.Header.Set("X-API-Key", apiKey)
+    resp, _ := (&http.Client{}).Do(req)
+    defer resp.Body.Close()
+    var result map[string]any
+    json.NewDecoder(resp.Body).Decode(&result)
+    return result
+}
+
+func main() {
+    base   := "${BASE}"
+    apiKey := "${KEY}"
+
+    for {
+        m   := getMetrics(base, apiKey)
+        cpu := m["cpu"].(map[string]any)
+        mem := m["memory"].(map[string]any)
+        fmt.Printf("CPU: %.1f%% | RAM: %.1f%%\\n",
+            cpu["usage"].(float64),
+            mem["usePercent"].(float64),
+        )
+        time.Sleep(15 * time.Second)
+    }
+}`,
+    },
+  },
+];
+
 // ─── Nav ─────────────────────────────────────────────────────────────────────
 
 const NAV_ITEMS = [
@@ -1110,12 +1387,17 @@ const NAV_ITEMS = [
   { id: "messages", label: "Mensagens", icon: MessageSquare },
   { id: "webhooks", label: "Webhooks", icon: Webhook },
   { id: "analytics", label: "Analytics", icon: BarChart3 },
+  { id: "admin", label: "Admin", icon: Shield },
   { id: "quickstart", label: "Quickstart", icon: Zap },
 ];
 
 // ─── Page ─────────────────────────────────────────────────────────────────────
 
 export default function WikiPage() {
+  const { apiKey, apiUrl } = useAuth();
+  const BASE = (apiUrl || DEFAULT_API_URL).replace(/\/$/, "");
+  const KEY = apiKey || "sua_api_key";
+
   const [activeSection, setActiveSection] = useState("overview");
   const contentRef = useRef<HTMLDivElement>(null);
 
@@ -1159,7 +1441,7 @@ export default function WikiPage() {
 
         <div className="mt-auto pt-6 px-3 space-y-2">
           <p className="text-[10px] font-bold text-muted-foreground/40 uppercase tracking-widest">Base URL</p>
-          <code className="text-[10px] font-mono text-primary/80 break-all">http://localhost:4000</code>
+          <code className="text-[10px] font-mono text-primary/80 break-all">{BASE}</code>
         </div>
       </aside>
 
@@ -1187,7 +1469,7 @@ export default function WikiPage() {
 
           <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
             {[
-              { label: "Porta padrão", value: "4000", color: "text-primary" },
+              { label: "Base URL", value: BASE, color: "text-primary" },
               { label: "Prefixo", value: "/api/v1", color: "text-emerald-400" },
               { label: "Formato", value: "JSON", color: "text-sky-400" },
             ].map(({ label, value, color }) => (
@@ -1224,6 +1506,8 @@ export default function WikiPage() {
                   { method: "PUT", path: "/webhooks/:id", desc: "Atualizar webhook" },
                   { method: "DELETE", path: "/webhooks/:id", desc: "Remover webhook" },
                   { method: "GET", path: "/analytics", desc: "Métricas e estatísticas" },
+                  { method: "GET", path: "/admin/metrics", desc: "Métricas do sistema (CPU, RAM, disco, containers)" },
+                  { method: "DELETE", path: "/admin/purge", desc: "Limpar toda a base de dados (Convex)" },
                 ].map(({ method, path, desc }, i) => (
                   <tr key={i} className="border-b border-border/20 last:border-0 hover:bg-muted/10 transition-colors">
                     <td className="px-4 py-3">
@@ -1350,7 +1634,7 @@ func (c *Client) newRequest(method, path string, body io.Reader) (*http.Request,
             número.
           </p>
           <div className="space-y-8">
-            {SESSIONS.map((ep, i) => (
+            {SESSIONS(BASE, KEY).map((ep, i) => (
               <EndpointCard key={i} endpoint={ep} />
             ))}
           </div>
@@ -1364,7 +1648,7 @@ func (c *Client) newRequest(method, path string, body io.Reader) (*http.Request,
             envio assíncrono via RabbitMQ.
           </p>
           <div className="space-y-8">
-            {MESSAGES.map((ep, i) => (
+            {MESSAGES(BASE, KEY).map((ep, i) => (
               <EndpointCard key={i} endpoint={ep} />
             ))}
           </div>
@@ -1405,7 +1689,7 @@ func (c *Client) newRequest(method, path string, body io.Reader) (*http.Request,
           </div>
 
           <div className="space-y-8">
-            {WEBHOOKS.map((ep, i) => (
+            {WEBHOOKS(BASE, KEY).map((ep, i) => (
               <EndpointCard key={i} endpoint={ep} />
             ))}
           </div>
@@ -1418,7 +1702,27 @@ func (c *Client) newRequest(method, path string, body io.Reader) (*http.Request,
             status das sessões e contagem de webhooks.
           </p>
           <div className="space-y-8">
-            {ANALYTICS.map((ep, i) => (
+            {ANALYTICS(BASE, KEY).map((ep, i) => (
+              <EndpointCard key={i} endpoint={ep} />
+            ))}
+          </div>
+        </Section>
+
+        {/* ── Admin ── */}
+        <Section id="admin" icon={Shield} title="Admin">
+          <p className="text-sm text-muted-foreground leading-relaxed max-w-2xl">
+            Endpoints administrativos para limpeza do banco de dados e monitoramento de recursos do servidor em tempo real.
+            Todos exigem o header <code className="text-primary text-xs">X-API-Key</code>.
+          </p>
+          <div className="flex items-start gap-3 p-4 rounded-2xl bg-destructive/5 border border-destructive/20">
+            <Circle size={16} className="text-destructive shrink-0 mt-0.5" />
+            <p className="text-sm text-muted-foreground">
+              O endpoint <code className="text-primary text-xs">DELETE /admin/purge</code> é <strong>irreversível</strong>.
+              Apaga permanentemente todos os dados do Convex. Use apenas em ambiente de desenvolvimento ou para reset completo.
+            </p>
+          </div>
+          <div className="space-y-8">
+            {ADMIN(BASE, KEY).map((ep, i) => (
               <EndpointCard key={i} endpoint={ep} />
             ))}
           </div>
@@ -1434,7 +1738,7 @@ func (c *Client) newRequest(method, path string, body io.Reader) (*http.Request,
             {[
               "Criar a sessão",
               "Verificar quando o QR estiver pronto",
-              "Exibir o QR e aguardar scan",
+              "Abrir o link do QR no navegador e escanear",
               "Confirmar conexão",
               "Enviar mensagem",
             ].map((step, i) => (
@@ -1453,46 +1757,40 @@ func (c *Client) newRequest(method, path string, body io.Reader) (*http.Request,
               curl: `#!/bin/bash
 API_KEY="${KEY}"
 BASE="${BASE}/api/v1"
-SESSION="quickstart-$$"
+NAME="Sessao Quickstart"
 
 echo "1. Criando sessão..."
-curl -s -X POST "$BASE/sessions" \\
-  -H "X-API-Key: $API_KEY" \\
-  -H "Content-Type: application/json" \\
-  -d "{\"sessionId\": \"$SESSION\"}"
+RESPONSE=$(curl -s -X POST "$BASE/sessions" \\
+  -H "X-API-Key: $API_KEY" -H "Content-Type: application/json" \\
+  -d '{"name": "'"$NAME"'"}')
+SESSION=$(echo "$RESPONSE" | jq -r '.sessionId')
+echo "   Session ID: $SESSION"
 
 echo "\\n2. Aguardando QR..."
 while true; do
-  STATUS=$(curl -s "$BASE/sessions/$SESSION/status" \\
-    -H "X-API-Key: $API_KEY" | jq -r '.status')
+  STATUS=$(curl -s "$BASE/sessions/$SESSION/status" -H "X-API-Key: $API_KEY" | jq -r '.status')
   echo "   Status: $STATUS"
   [ "$STATUS" = "qr_ready" ] && break
   sleep 2
 done
 
-echo "\\n3. Obtendo QR code..."
-curl -s "$BASE/sessions/$SESSION/qr" \\
-  -H "X-API-Key: $API_KEY" | jq -r '.qr' > qr.b64
+echo "\\n3. Abra o link abaixo no navegador para escanear o QR:"
+echo "   → ${BASE}/sessions/$SESSION/qr-view"
+echo "   (A página atualiza automaticamente a cada 30s)"
 
-echo "\\n4. Aguardando conexão (escaneie o QR)..."
+echo "\\n4. Aguardando conexão..."
 while true; do
-  STATUS=$(curl -s "$BASE/sessions/$SESSION/status" \\
-    -H "X-API-Key: $API_KEY" | jq -r '.status')
+  STATUS=$(curl -s "$BASE/sessions/$SESSION/status" -H "X-API-Key: $API_KEY" | jq -r '.status')
+  echo "   Status: $STATUS"
   [ "$STATUS" = "connected" ] && break
   sleep 3
 done
 
 echo "\\n5. Enviando mensagem..."
 curl -s -X POST "$BASE/messages/send" \\
-  -H "X-API-Key: $API_KEY" \\
-  -H "Content-Type: application/json" \\
-  -d "{
-    \\"sessionId\\": \\"$SESSION\\",
-    \\"to\\": \\"5511999887766\\",
-    \\"text\\": \\"Conectado com sucesso! 🎉\\"
-  }"`,
-              nodejs: `import fetch from 'node-fetch'; // ou fetch nativo no Node 18+
-
+  -H "X-API-Key: $API_KEY" -H "Content-Type: application/json" \\
+  -d '{"sessionId": "'"$SESSION"'", "to": "5511999887766@s.whatsapp.net", "text": "Conectado com sucesso!"}'`,
+              nodejs: `// Requer Node.js 18+ (fetch nativo integrado)
 const BASE    = '${BASE}/api/v1';
 const API_KEY = '${KEY}';
 
@@ -1515,18 +1813,16 @@ async function waitForStatus(sessionId, target, interval = 2000) {
 }
 
 // ── Fluxo completo ──
-const SESSION = 'quickstart-' + Date.now();
-
 console.log('1. Criando sessão...');
-await api('POST', '/sessions', { sessionId: SESSION });
+const { sessionId: SESSION } = await api('POST', '/sessions', { name: 'Sessao Quickstart' });
+console.log('   Session ID:', SESSION);
 
 console.log('2. Aguardando QR...');
 await waitForStatus(SESSION, 'qr_ready');
 
-console.log('3. Obtendo QR code...');
-const { qr } = await api('GET', \`/sessions/\${SESSION}/qr\`);
-console.log('   QR:', qr.slice(0, 50) + '...');
-// Exibir qr em uma <img> ou terminal (lib qrcode-terminal)
+console.log('3. Abra o link no navegador para escanear o QR:');
+console.log(\`   → ${BASE}/sessions/\${SESSION}/qr-view\`);
+// A página atualiza automaticamente a cada 30s
 
 console.log('4. Aguardando scan...');
 await waitForStatus(SESSION, 'connected', 3000);
@@ -1534,7 +1830,7 @@ await waitForStatus(SESSION, 'connected', 3000);
 console.log('5. Enviando mensagem!');
 await api('POST', '/messages/send', {
   sessionId: SESSION,
-  to: '5511999887766',
+  to: '5511999887766@s.whatsapp.net',
   text: 'Conectado com sucesso! 🎉',
 });
 console.log('Pronto!');`,
@@ -1543,7 +1839,6 @@ import requests
 
 BASE    = '${BASE}/api/v1'
 HEADERS = {'X-API-Key': '${KEY}'}
-SESSION = 'quickstart-python'
 
 
 def api(method, path, **kwargs):
@@ -1561,14 +1856,15 @@ def wait_for_status(session_id, target, interval=2):
 
 # ── Fluxo completo ──
 print('1. Criando sessão...')
-api('POST', '/sessions', json={'sessionId': SESSION})
+SESSION = api('POST', '/sessions', json={'name': 'Sessao Quickstart'})['sessionId']
+print(f'   Session ID: {SESSION}')
 
 print('2. Aguardando QR...')
 wait_for_status(SESSION, 'qr_ready')
 
-print('3. Obtendo QR code...')
-qr = api('GET', f'/sessions/{SESSION}/qr')['qr']
-print(f'   QR: {qr[:50]}...')
+print('3. Abra o link no navegador para escanear o QR:')
+print(f'   → ${BASE}/sessions/{SESSION}/qr-view')
+# A página atualiza automaticamente a cada 30s
 
 print('4. Aguardando scan...')
 wait_for_status(SESSION, 'connected', interval=3)
@@ -1576,14 +1872,13 @@ wait_for_status(SESSION, 'connected', interval=3)
 print('5. Enviando mensagem!')
 api('POST', '/messages/send', json={
     'sessionId': SESSION,
-    'to': '5511999887766',
+    'to': '5511999887766@s.whatsapp.net',
     'text': 'Conectado com sucesso! 🎉',
 })
 print('Pronto!')`,
               php: `<?php
 define('BASE',    '${BASE}/api/v1');
 define('API_KEY', '${KEY}');
-define('SESSION', 'quickstart-php');
 
 function api(string $method, string $path, ?array $body = null): array {
     $ch = curl_init(BASE . $path);
@@ -1606,22 +1901,24 @@ function waitForStatus(string $sessionId, string $target, int $interval = 2): vo
 }
 
 echo "1. Criando sessão...\\n";
-api('POST', '/sessions', ['sessionId' => SESSION]);
+$response = api('POST', '/sessions', ['name' => 'Sessao Quickstart']);
+$SESSION  = $response['sessionId'];
+echo "   Session ID: $SESSION\\n";
 
 echo "2. Aguardando QR...\\n";
-waitForStatus(SESSION, 'qr_ready');
+waitForStatus($SESSION, 'qr_ready');
 
-echo "3. Obtendo QR code...\\n";
-$qr = api('GET', '/sessions/' . SESSION . '/qr')['qr'];
-echo '   QR: ' . substr($qr, 0, 50) . "...\\n";
+echo "3. Abra o link no navegador para escanear o QR:\\n";
+echo "   → ${BASE}/sessions/$SESSION/qr-view\\n";
+// A página atualiza automaticamente a cada 30s
 
 echo "4. Aguardando scan...\\n";
-waitForStatus(SESSION, 'connected', 3);
+waitForStatus($SESSION, 'connected', 3);
 
 echo "5. Enviando mensagem!\\n";
 api('POST', '/messages/send', [
-    'sessionId' => SESSION,
-    'to'        => '5511999887766',
+    'sessionId' => $SESSION,
+    'to'        => '5511999887766@s.whatsapp.net',
     'text'      => 'Conectado com sucesso! 🎉',
 ]);
 echo "Pronto!\\n";`,
@@ -1636,9 +1933,8 @@ import (
 )
 
 const (
-    base    = "${BASE}/api/v1"
-    apiKey  = "${KEY}"
-    session = "quickstart-go"
+    base   = "${BASE}/api/v1"
+    apiKey = "${KEY}"
 )
 
 func api(method, path string, body any) map[string]any {
@@ -1672,14 +1968,16 @@ func waitForStatus(sessionID, target string, interval time.Duration) {
 
 func main() {
     fmt.Println("1. Criando sessão...")
-    api("POST", "/sessions", map[string]string{"sessionId": session})
+    created := api("POST", "/sessions", map[string]any{"name": "Sessao Quickstart"})
+    session := created["sessionId"].(string)
+    fmt.Println("   Session ID:", session)
 
     fmt.Println("2. Aguardando QR...")
     waitForStatus(session, "qr_ready", 2*time.Second)
 
-    fmt.Println("3. Obtendo QR code...")
-    qr := api("GET", "/sessions/"+session+"/qr", nil)["qr"].(string)
-    fmt.Println("   QR:", qr[:50]+"...")
+    fmt.Println("3. Abra o link no navegador para escanear o QR:")
+    fmt.Printf("   → ${BASE}/sessions/%s/qr-view\\n", session)
+    // A página atualiza automaticamente a cada 30s
 
     fmt.Println("4. Aguardando scan...")
     waitForStatus(session, "connected", 3*time.Second)
@@ -1687,7 +1985,7 @@ func main() {
     fmt.Println("5. Enviando mensagem!")
     api("POST", "/messages/send", map[string]string{
         "sessionId": session,
-        "to":        "5511999887766",
+        "to":        "5511999887766@s.whatsapp.net",
         "text":      "Conectado com sucesso! 🎉",
     })
     fmt.Println("Pronto!")

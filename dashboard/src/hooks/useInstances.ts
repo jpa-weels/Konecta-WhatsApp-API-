@@ -1,170 +1,185 @@
 import { useState, useEffect, useCallback, useRef } from "react";
-import type { InstanceConfig, InstanceState, CreateInstanceForm, SessionStatus } from "../types";
+import { useQuery } from "convex/react";
+import { anyApi } from "convex/server";
+import type { InstanceState, CreateInstanceForm, SessionStatus } from "../types";
 import { createSession, getStatus, getQR, deleteSession, restartSession as restartSessionApi } from "../api/whatsapp";
-import { generateId } from "../lib/utils";
 
-const STORAGE_KEY = "whatsapp-instances";
+const QR_CACHE_KEY = "qr-cache";
+const QR_CACHE_TTL = 60 * 1000; // 60s — matches Redis TTL
+const QR_PRUNE_AGE = 2 * 24 * 60 * 60 * 1000; // prune entries older than 2 days
 const POLL_INTERVAL = 5000;
 
-type StateSlice = {
-  status: SessionStatus;
-  phone: string | null;
-  qrCode: string | null;
-  loading: boolean;
-  error: string | null;
-};
+type QrEntry = { qr: string; ts: number };
 
-const DEFAULT_STATE: StateSlice = {
-  status: "unknown",
-  phone: null,
-  qrCode: null,
-  loading: false,
-  error: null,
-};
-
-function loadFromStorage(): InstanceConfig[] {
-  try {
-    const raw = localStorage.getItem(STORAGE_KEY);
-    return raw ? (JSON.parse(raw) as InstanceConfig[]) : [];
-  } catch {
-    return [];
-  }
+function loadQrCache(): Record<string, QrEntry> {
+  try { return JSON.parse(localStorage.getItem(QR_CACHE_KEY) ?? "{}"); } catch { return {}; }
 }
 
-function saveToStorage(instances: InstanceConfig[]) {
-  localStorage.setItem(STORAGE_KEY, JSON.stringify(instances));
+function pruneQrCache() {
+  const now = Date.now();
+  const pruned = Object.fromEntries(
+    Object.entries(loadQrCache()).filter(([, v]) => now - v.ts < QR_PRUNE_AGE)
+  );
+  localStorage.setItem(QR_CACHE_KEY, JSON.stringify(pruned));
 }
 
-export function useInstances() {
-  const [configs, setConfigs] = useState<InstanceConfig[]>(() => loadFromStorage());
-  const [states, setStates] = useState<Map<string, StateSlice>>(new Map());
-  const configsRef = useRef(configs);
-  configsRef.current = configs;
+function getCachedQr(sessionId: string): string | null {
+  const entry = loadQrCache()[sessionId];
+  if (!entry || Date.now() - entry.ts > QR_CACHE_TTL) return null;
+  return entry.qr;
+}
 
-  const updateState = useCallback((id: string, patch: Partial<StateSlice>) => {
-    setStates((prev) => {
+function cacheQr(sessionId: string, qr: string) {
+  const cache = loadQrCache();
+  cache[sessionId] = { qr, ts: Date.now() };
+  localStorage.setItem(QR_CACHE_KEY, JSON.stringify(cache));
+}
+
+type LiveState = { status: SessionStatus; phone: string | null; qrCode: string | null; loading: boolean; error: string | null };
+const DEFAULT_LIVE: LiveState = { status: "unknown", phone: null, qrCode: null, loading: false, error: null };
+
+type ConvexSession = { _id: string; sessionId: string; name?: string; status: string; phone?: string; updatedAt: number };
+
+export function useInstances(serverCreds?: { apiUrl: string; apiKey: string }) {
+  const apiUrl = serverCreds?.apiUrl ?? "";
+  const apiKey = serverCreds?.apiKey ?? "";
+
+  // Real-time session list from Convex
+  const convexSessions = ((useQuery(anyApi.sessions.list, {}) ?? []) as ConvexSession[]);
+
+  const [liveStates, setLiveStates] = useState<Map<string, LiveState>>(new Map());
+  const sessionsRef = useRef(convexSessions);
+  sessionsRef.current = convexSessions;
+
+  useEffect(() => { pruneQrCache(); }, []);
+
+  const updateLive = useCallback((sessionId: string, patch: Partial<LiveState>) => {
+    setLiveStates((prev) => {
       const next = new Map(prev);
-      next.set(id, { ...(next.get(id) ?? DEFAULT_STATE), ...patch });
+      next.set(sessionId, { ...(next.get(sessionId) ?? DEFAULT_LIVE), ...patch });
       return next;
     });
   }, []);
 
-  const pollInstance = useCallback(
-    async (config: InstanceConfig) => {
+  const pollSession = useCallback(
+    async (sessionId: string) => {
+      if (!apiUrl || !apiKey) return;
       try {
-        const { status, phone } = await getStatus(config.apiUrl, config.apiKey, config.sessionId);
+        const { status, phone } = await getStatus(apiUrl, apiKey, sessionId);
         const s = status as SessionStatus;
         if (s === "qr_ready") {
+          const cached = getCachedQr(sessionId);
+          if (cached) {
+            updateLive(sessionId, { status: s, phone: phone ?? null, qrCode: cached, error: null });
+            return;
+          }
           try {
-            const { qr } = await getQR(config.apiUrl, config.apiKey, config.sessionId);
-            updateState(config.id, { status: s, phone: phone ?? null, qrCode: qr, error: null });
+            const { qr } = await getQR(apiUrl, apiKey, sessionId);
+            cacheQr(sessionId, qr);
+            updateLive(sessionId, { status: s, phone: phone ?? null, qrCode: qr, error: null });
           } catch {
-            updateState(config.id, { status: s, phone: phone ?? null, qrCode: null, error: null });
+            updateLive(sessionId, { status: s, phone: phone ?? null, qrCode: null, error: null });
           }
         } else {
-          updateState(config.id, { status: s, phone: phone ?? null, qrCode: null, error: null });
+          updateLive(sessionId, { status: s, phone: phone ?? null, qrCode: null, error: null });
         }
       } catch {
-        updateState(config.id, { status: "unknown", phone: null, error: "Sem conexão com a API" });
+        updateLive(sessionId, { status: "unknown", phone: null, error: "Sem conexão com a API" });
       }
     },
-    [updateState]
+    [apiUrl, apiKey, updateLive]
   );
 
   useEffect(() => {
-    if (configs.length === 0) return;
-    configs.forEach(pollInstance);
-    const timer = setInterval(() => configsRef.current.forEach(pollInstance), POLL_INTERVAL);
+    if (!apiUrl || !apiKey || convexSessions.length === 0) return;
+    convexSessions.forEach((s) => pollSession(s.sessionId));
+    const timer = setInterval(
+      () => sessionsRef.current.forEach((s) => pollSession(s.sessionId)),
+      POLL_INTERVAL
+    );
     return () => clearInterval(timer);
-  }, [configs, pollInstance]);
+  }, [convexSessions, apiUrl, apiKey, pollSession]);
 
-  const instances: InstanceState[] = configs.map((c) => ({
-    ...c,
-    ...(states.get(c.id) ?? DEFAULT_STATE),
-  }));
+  const instances: InstanceState[] = convexSessions.map((s) => {
+    const live = liveStates.get(s.sessionId) ?? DEFAULT_LIVE;
+    return {
+      id: s._id as string,
+      name: s.name ?? s.sessionId,
+      sessionId: s.sessionId,
+      apiKey,
+      apiUrl,
+      createdAt: s.updatedAt,
+      status: live.status,
+      phone: live.phone,
+      qrCode: live.qrCode,
+      loading: live.loading,
+      error: live.error,
+    };
+  });
+
+  const instancesRef = useRef(instances);
+  instancesRef.current = instances;
 
   const addInstance = useCallback(
     async (form: CreateInstanceForm): Promise<void> => {
-      const id = generateId();
-      const sessionId = form.sessionId.trim() || generateId();
-      const apiUrl = form.apiUrl.replace(/\/$/, "");
-
-      const newConfig: InstanceConfig = {
-        id,
-        name: form.name,
-        sessionId,
-        apiKey: form.apiKey,
-        apiUrl,
-        createdAt: Date.now(),
-      };
-
-      updateState(id, { ...DEFAULT_STATE, loading: true });
-
+      const url = (form.apiUrl || apiUrl).replace(/\/$/, "");
+      const key = form.apiKey || apiKey;
+      if (!url || !key) throw new Error("Credenciais do servidor não configuradas");
+      const sessionId = form.sessionId.trim() || crypto.randomUUID();
+      updateLive(sessionId, { ...DEFAULT_LIVE, loading: true });
       try {
-        await createSession(apiUrl, form.apiKey, sessionId, form.name);
-        const updated = [...configsRef.current, newConfig];
-        setConfigs(updated);
-        saveToStorage(updated);
-        updateState(id, { loading: false });
-        await pollInstance(newConfig);
+        await createSession(url, key, sessionId, form.name);
+        updateLive(sessionId, { loading: false });
       } catch (err) {
-        updateState(id, { loading: false, error: err instanceof Error ? err.message : "Erro" });
+        updateLive(sessionId, { loading: false, error: err instanceof Error ? err.message : "Erro" });
         throw err;
       }
     },
-    [updateState, pollInstance]
+    [apiUrl, apiKey, updateLive]
   );
 
   const removeInstance = useCallback(async (id: string): Promise<void> => {
-    const config = configsRef.current.find((c) => c.id === id);
-    if (!config) return;
-
+    const session = instancesRef.current.find((s) => s.id === id);
+    if (!session) return;
     try {
-      await deleteSession(config.apiUrl, config.apiKey, config.sessionId);
-    } catch {
-      // remove locally even if API fails
-    }
-
-    const updated = configsRef.current.filter((c) => c.id !== id);
-    setConfigs(updated);
-    saveToStorage(updated);
-    setStates((prev) => {
+      await deleteSession(session.apiUrl, session.apiKey, session.sessionId);
+    } catch { /* remove locally even if API fails */ }
+    setLiveStates((prev) => {
       const next = new Map(prev);
-      next.delete(id);
+      next.delete(session.sessionId);
       return next;
     });
   }, []);
 
   const refreshInstance = useCallback(
     async (id: string): Promise<void> => {
-      const config = configsRef.current.find((c) => c.id === id);
-      if (config) await pollInstance(config);
+      const session = instancesRef.current.find((s) => s.id === id);
+      if (session) await pollSession(session.sessionId);
     },
-    [pollInstance]
+    [pollSession]
   );
 
   const restartInstance = useCallback(
     async (id: string): Promise<void> => {
-      const config = configsRef.current.find((c) => c.id === id);
-      if (!config) return;
-      updateState(id, { loading: true });
+      const session = instancesRef.current.find((s) => s.id === id);
+      if (!session) return;
+      updateLive(session.sessionId, { loading: true });
       try {
-        await restartSessionApi(config.apiUrl, config.apiKey, config.sessionId);
-        setTimeout(() => pollInstance(config), 2000);
+        await restartSessionApi(session.apiUrl, session.apiKey, session.sessionId);
+        setTimeout(() => pollSession(session.sessionId), 2000);
       } catch (err) {
-        updateState(id, { loading: false, error: err instanceof Error ? err.message : "Erro ao reiniciar" });
+        updateLive(session.sessionId, {
+          loading: false,
+          error: err instanceof Error ? err.message : "Erro ao reiniciar",
+        });
       }
     },
-    [updateState, pollInstance]
+    [updateLive, pollSession]
   );
 
   const updateInstance = useCallback(
-    (id: string, patch: Partial<Pick<InstanceConfig, "name" | "apiKey" | "apiUrl">>) => {
-      const updated = configsRef.current.map((c) =>
-        c.id === id ? { ...c, ...patch } : c
-      );
-      setConfigs(updated);
-      saveToStorage(updated);
+    (_id: string, _patch: Partial<Pick<{ name: string; apiKey: string; apiUrl: string }, "name" | "apiKey" | "apiUrl">>) => {
+      // Session metadata is owned by the backend/Convex — no local override needed
     },
     []
   );

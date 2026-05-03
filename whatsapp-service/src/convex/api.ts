@@ -15,6 +15,11 @@ export const api = {
     upsert: "sessions:upsert" as unknown as any,
     list: "sessions:list" as unknown as any,
     get: "sessions:get" as unknown as any,
+    remove: "sessions:remove" as unknown as any,
+  },
+  media: {
+    generateUploadUrl: "media:generateUploadUrl" as unknown as any,
+    getUrl: "media:getUrl" as unknown as any,
   },
   webhooks: {
     create: "webhooks:create" as unknown as any,

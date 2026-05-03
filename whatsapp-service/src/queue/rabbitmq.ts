@@ -1,4 +1,4 @@
-import amqplib, { type Channel, type ChannelModel } from "amqplib";
+import amqplib, { type Channel, type ChannelModel, type ConsumeMessage } from "amqplib";
 import { config } from "../config";
 import { logger } from "../logger";
 
@@ -32,6 +32,8 @@ export async function connectRabbitMQ(): Promise<void> {
   conn.on("error", (err) => logger.error({ err }, "Erro na conexão RabbitMQ"));
   conn.on("close", () => {
     logger.warn("Conexão RabbitMQ fechada — tentando reconectar em 5s");
+    channel = null;
+    connection = null;
     setTimeout(connectRabbitMQ, 5000);
   });
 
@@ -39,7 +41,7 @@ export async function connectRabbitMQ(): Promise<void> {
 }
 
 export function getChannel(): Channel {
-  if (!channel) throw new Error("RabbitMQ channel não inicializado");
+  if (!channel) throw new Error("RabbitMQ channel indisponível — reconexão em andamento");
   return channel;
 }
 
@@ -79,8 +81,10 @@ export interface InboundMessage {
   pushName?: string;
   media?: {
     mimetype: string;
+    url: string;
     base64: string;
     fileName?: string;
+    storageId?: string;
   };
   raw?: any;
 }
@@ -123,6 +127,32 @@ export async function consumeOutbound(handler: OutboundHandler): Promise<void> {
       logger.error({ err }, "Erro ao processar mensagem da fila outbound");
       ch.nack(raw, false, false);
 
+      ch.sendToQueue(
+        config.rabbitmq.queues.failed,
+        raw.content,
+        { persistent: true, contentType: "application/json" },
+      );
+    }
+  });
+}
+
+// ─── Consumidor de mensagens de entrada ───────────────────────────────────────
+
+type InboundHandler = (msg: InboundMessage) => Promise<void>;
+
+export async function consumeInbound(handler: InboundHandler): Promise<void> {
+  const ch = getChannel();
+  ch.prefetch(10);
+
+  await ch.consume(config.rabbitmq.queues.inbound, async (raw: ConsumeMessage | null) => {
+    if (!raw) return;
+    try {
+      const msg: InboundMessage = JSON.parse(raw.content.toString());
+      await handler(msg);
+      ch.ack(raw);
+    } catch (err) {
+      logger.error({ err }, "Erro ao processar mensagem inbound da fila");
+      ch.nack(raw, false, false);
       ch.sendToQueue(
         config.rabbitmq.queues.failed,
         raw.content,

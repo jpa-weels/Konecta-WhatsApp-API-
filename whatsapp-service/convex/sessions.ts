@@ -45,3 +45,14 @@ export const list = query({
     return ctx.db.query("sessions").order("desc").collect();
   },
 });
+
+export const remove = mutation({
+  args: { sessionId: v.string() },
+  handler: async (ctx, { sessionId }) => {
+    const existing = await ctx.db
+      .query("sessions")
+      .withIndex("by_sessionId", (q) => q.eq("sessionId", sessionId))
+      .first();
+    if (existing) await ctx.db.delete(existing._id);
+  },
+});

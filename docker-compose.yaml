@@ -7,6 +7,9 @@ services:
     build:
       context: ./dashboard
       dockerfile: Dockerfile
+      args:
+        VITE_API_URL: ${VITE_API_URL:-http://localhost:4000}
+        CONVEX_URL: ${CONVEX_URL:-http://localhost:3210}
     container_name: KonectaDashboard
     restart: unless-stopped
     ports:

@@ -4,6 +4,15 @@ function authHeaders(apiKey: string) {
   return { "X-API-Key": apiKey, "Content-Type": "application/json" };
 }
 
+export async function listSessions(
+  apiUrl: string,
+  apiKey: string
+): Promise<{ sessions: { id: string; status: string }[] }> {
+  const res = await fetch(`${apiUrl}/api/v1/sessions`, { headers: authHeaders(apiKey) });
+  if (!res.ok) throw new Error("Erro ao listar sessões");
+  return res.json();
+}
+
 export async function createSession(apiUrl: string, apiKey: string, sessionId: string, name?: string) {
   const res = await fetch(`${apiUrl}/api/v1/sessions`, {
     method: "POST",

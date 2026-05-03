@@ -14,6 +14,7 @@ import { Button } from "@/components/ui/Button";
 import Modal from "@/components/Modal";
 import SystemMonitor from "@/components/SystemMonitor";
 import { useInstances } from "@/hooks/useInstances";
+import { useAuth } from "@/auth/AuthContext";
 import { purgeDatabase, type PurgeResult } from "@/api/whatsapp";
 import { cn } from "@/lib/utils";
 
@@ -191,7 +192,8 @@ function PurgeModal({ isOpen, onClose, apiUrl, apiKey }: PurgeModalProps) {
 // ─── Page ─────────────────────────────────────────────────────────────────────
 
 export default function SettingsPage() {
-  const { instances } = useInstances();
+  const { apiUrl, apiKey } = useAuth();
+  const { instances } = useInstances(apiUrl && apiKey ? { apiUrl, apiKey } : undefined);
   const [purgeOpen, setPurgeOpen] = useState(false);
 
   // Usa a primeira instância disponível para a chamada de purge

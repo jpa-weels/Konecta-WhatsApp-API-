@@ -17,7 +17,9 @@ import {
 import { Button } from "@/components/ui/Button";
 import { cn } from "@/lib/utils";
 import { useAnalytics } from "@/hooks/useAnalytics";
-import type { InstanceConfig } from "@/types";
+import { useAuth } from "@/auth/AuthContext";
+import { useInstances } from "@/hooks/useInstances";
+import type { InstanceConfig, InstanceState } from "@/types";
 
 // ─── Animated number ──────────────────────────────────────────────────────────
 
@@ -316,12 +318,12 @@ function buildDayData(
 ) {
   return Array.from({ length: days }, (_, i) => {
     const d = new Date();
-    d.setHours(0, 0, 0, 0);
-    d.setDate(d.getDate() - (days - 1 - i));
+    d.setUTCHours(0, 0, 0, 0);
+    d.setUTCDate(d.getUTCDate() - (days - 1 - i));
     const key = Math.floor(d.getTime() / 1000);
     const counts = byDay[key] ?? { inbound: 0, outbound: 0 };
     return {
-      label: d.toLocaleDateString("pt-BR", { weekday: "short" }),
+      label: d.toLocaleDateString("pt-BR", { weekday: "short", timeZone: "UTC" }),
       inbound: counts.inbound,
       outbound: counts.outbound,
     };
@@ -338,20 +340,21 @@ function detectTrend(values: number[]): "up" | "down" | "flat" {
   return "flat";
 }
 
-function getSessionNames(): Record<string, string> {
-  try {
-    const instances: InstanceConfig[] = JSON.parse(localStorage.getItem("whatsapp-instances") || "[]");
-    return Object.fromEntries(instances.map(i => [i.sessionId, i.name]));
-  } catch { return {}; }
+function getSessionNames(instances: InstanceState[]): Record<string, string> {
+  return Object.fromEntries(instances.map(i => [i.sessionId, i.name]));
 }
 
 // ─── Page ─────────────────────────────────────────────────────────────────────
 
 export default function AnalyticsPage() {
-  const { data, loading, error, hasApi, lastUpdated, refresh } = useAnalytics();
+  const { apiUrl, apiKey } = useAuth();
+  const { instances } = useInstances(apiUrl && apiKey ? { apiUrl, apiKey } : undefined);
+  const { data, loading, error, hasApi, lastUpdated, refresh } = useAnalytics(
+    apiUrl && apiKey ? { apiUrl, apiKey } : undefined
+  );
   const [range, setRange] = useState<7 | 30>(7);
 
-  const sessionNames = getSessionNames();
+  const sessionNames = getSessionNames(instances);
 
   const dayData = data ? buildDayData(data.messages.byDay, range) : [];
   const sparkValues = data ? buildDayData(data.messages.byDay, 14).map(d => d.inbound + d.outbound) : [];

@@ -1,15 +1,14 @@
-PREPARANDO A VPS
+PREPARANDO A VPS # hetzner.com - VPS
 
 sudo timedatectl set-timezone America/Sao_Paulo
-
 sudo ln -sf /usr/share/zoneinfo/America/Sao_Paulo /etc/localtime
-
 timedatectl
 
 
 sudo apt update
-
+sudo apt upgrade -y
 sudo apt install -y ca-certificates curl gnupg
+sudo apt install nginx -y
 
 sudo install -m 0755 -d /etc/apt/keyrings
 curl -fsSL https://download.docker.com/linux/ubuntu/gpg | sudo tee /etc/apt/keyrings/docker.asc > /dev/null
@@ -28,24 +27,13 @@ sudo apt update
 sudo apt install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
 
 
-docker --version
-docker compose version
 
-
-
-
-# hetzner.com - VPS
 # cloudflare.com Gerenciamento de dominio 
 
 ✅ OPÇÃO 1 — NGINX como Proxy Reverso (recomendado)
-Ideal se você controla o servidor onde está o domínio.
-🔹 1. Pré-requisitos
-Domínio menflix.com.br apontando para o IP do servidor proxy
 
 Ubuntu/Debian (exemplo)
 
-sudo apt update
-sudo apt install nginx -y
 ---------------------------------------------------------------------
 sudo nano /etc/nginx/sites-available/menflix.com.br
 
@@ -175,3 +163,22 @@ sudo systemctl reload nginx
 
 sudo apt install certbot python3-certbot-nginx -y
 sudo certbot --nginx -d menflix.com.br -d api.menflix.com.br -d db.menflix.com.br -d proxy.menflix.com.br -d convex.menflix.com.br
+
+
+
+
+faça o clone do porjeto 
+git clone https://github.com/jpa-weels/Konecta-WhatsApp-API-.git konecta
+cd konecta
+cp .env.example .env.local
+
+docker compose --env-file .env.local -f dependencias.yaml up -d
+
+Crie as variáveis de ambiente que estiver faltando em .env.local
+API_SECRET
+
+node -e "console.log(require('crypto').randomBytes(64).toString('hex'))"
+
+
+
+npx convex dev --url http://localhost:3210 --admin-key "api-local|01724bf5e0a038ffbde05d743174e8d27b6c7b1d0a8ab445cb7efb9efe6ea3f4035d8bad87"

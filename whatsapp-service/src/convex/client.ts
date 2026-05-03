@@ -1,4 +1,5 @@
 import { ConvexHttpClient } from "convex/browser";
+import axios from "axios";
 import { config } from "../config";
 import { logger } from "../logger";
 
@@ -20,6 +21,29 @@ export function getConvex(): ConvexHttpClient {
 
 import { api } from "./api";
 
+export async function uploadMediaToStorage(
+  buffer: Uint8Array,
+  mimetype: string,
+): Promise<{ storageId: string; mediaUrl: string }> {
+  const client = getConvex();
+  const uploadUrl = await client.mutation(api.media.generateUploadUrl, {});
+  const { data } = await axios.post<{ storageId: string }>(uploadUrl, buffer, {
+    headers: { "Content-Type": mimetype },
+    maxBodyLength: Infinity,
+  });
+  const { storageId } = data;
+  const mediaUrl = (await client.query(api.media.getUrl, { storageId })) as string;
+  return { storageId, mediaUrl: mediaUrl ?? "" };
+}
+
+export async function removeSession(sessionId: string): Promise<void> {
+  try {
+    await getConvex().mutation(api.sessions.remove, { sessionId });
+  } catch (err) {
+    logger.error({ err, sessionId }, "Erro ao remover sessão do Convex");
+  }
+}
+
 export async function saveMessage(payload: {
   sessionId: string;
   messageId: string;
@@ -30,6 +54,8 @@ export async function saveMessage(payload: {
   timestamp: number;
   direction: "inbound" | "outbound";
   status?: string;
+  storageId?: string;
+  mediaUrl?: string;
 }): Promise<string | null> {
   try {
     const client = getConvex();
@@ -140,6 +166,15 @@ export async function getMessageAnalytics(days = 30): Promise<any> {
   } catch (err) {
     logger.error({ err }, "Erro ao buscar analytics de mensagens");
     return { total: 0, inbound: 0, outbound: 0, byDay: {}, byType: {}, bySession: {} };
+  }
+}
+
+export async function listAllSessions(): Promise<any[]> {
+  try {
+    return await getConvex().query(api.sessions.list, {});
+  } catch (err) {
+    logger.error({ err }, "Erro ao listar sessões no Convex");
+    return [];
   }
 }
 

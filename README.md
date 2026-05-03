@@ -1,5 +1,5 @@
 <div align="center">
-  <img src="Konecta.png" alt="Konecta API Logo" />
+  <img src="./Konecta.png" alt="Konecta API Logo" />
 </div>
 
 # Konecta API 🚀
@@ -51,7 +51,7 @@ Follow the steps below carefully to configure and run the project from scratch:
 
 Before starting, rename (or create) your `.env.local` file in the root directory and fill in the security variables.
 
-To generate secure random strings (for `API_SECRET` and `INSTANCE_SECRET`), you can run the following in any terminal with Node.js:
+To generate secure random strings (for `API_SECRET`), you can run the following in any terminal with Node.js:
 
 ```bash
 node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"
@@ -60,7 +60,6 @@ node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"
 Fill in your `.env.local`:
 
 - `API_SECRET`: (used to create instances via the API and as the login password for the Dashboard)
-- `INSTANCE_SECRET`: (used for Convex database internal security)
 
 ### 2. Boot Up the Infrastructure (Dependencies)
 
@@ -68,7 +67,7 @@ The project depends on PostgreSQL, Redis, RabbitMQ, and the Convex Backend.
 Bring up the network and dependencies first:
 
 ```bash
-docker compose -f dependencias.yaml up -d --build
+docker compose --env-file .env.local -f dependencias.yaml up -d --build
 ```
 
 Wait a few seconds for the databases to boot up properly.
@@ -104,7 +103,7 @@ Finally, start the main containers (Node.js API and React Dashboard):
 # Go back to the project root (if you are inside whatsapp-service)
 cd ..
 
-docker compose up -d --build
+docker compose --env-file .env.local -f docker-compose.yaml up -d --build
 ```
 
 ### 🎉 All Set!

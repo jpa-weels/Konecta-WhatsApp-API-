@@ -10,6 +10,8 @@
 
 import type * as admin from "../admin.js";
 import type * as contacts from "../contacts.js";
+import type * as crons from "../crons.js";
+import type * as media from "../media.js";
 import type * as messages from "../messages.js";
 import type * as sessions from "../sessions.js";
 import type * as webhooks from "../webhooks.js";
@@ -23,6 +25,8 @@ import type {
 declare const fullApi: ApiFromModules<{
   admin: typeof admin;
   contacts: typeof contacts;
+  crons: typeof crons;
+  media: typeof media;
   messages: typeof messages;
   sessions: typeof sessions;
   webhooks: typeof webhooks;

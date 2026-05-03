@@ -8,6 +8,13 @@ COPY package*.json ./
 RUN npm install --no-audit --no-fund
 
 COPY . .
+
+ARG VITE_API_URL=http://localhost:4000
+ENV VITE_API_URL=$VITE_API_URL
+
+ARG CONVEX_URL=http://localhost:3210
+ENV CONVEX_URL=$CONVEX_URL
+
 RUN npm run build
 
 # ─── Runtime ──────────────────────────────────────────────────────────────────

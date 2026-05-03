@@ -14,7 +14,7 @@ export const config = {
   port: Number(process.env.PORT ?? 4000),
   nodeEnv: process.env.NODE_ENV ?? "development",
   apiSecret: required("API_SECRET"),
-  apiUrl: process.env.API_URL ?? `http://localhost:${process.env.PORT ?? 4000}`,
+  apiUrl: process.env.VITE_API_URL ?? `http://localhost:${process.env.PORT ?? 4000}`,
   instanceName: process.env.INSTANCE_NAME ?? "api-local",
 
   redis: {
@@ -48,5 +48,10 @@ export const config = {
 
   webhook: {
     url: process.env.WEBHOOK_URL ?? "",
+    allowPrivateIps: process.env.ALLOW_PRIVATE_WEBHOOK_IPS === "true",
+  },
+
+  media: {
+    path: process.env.MEDIA_PATH ?? "./media",
   },
 };

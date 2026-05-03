@@ -28,29 +28,7 @@ export async function closeRedis(): Promise<void> {
 
 // ─── Helpers de sessão ────────────────────────────────────────────────────────
 
-const SESSION_PREFIX = "wa:session:";
 const QR_PREFIX = "wa:qr:";
-const STATUS_PREFIX = "wa:status:";
-
-export async function saveSessionCreds(sessionId: string, creds: object): Promise<void> {
-  const redis = getRedis();
-  await redis.setex(
-    `${SESSION_PREFIX}${sessionId}`,
-    config.redis.sessionTTL,
-    JSON.stringify(creds),
-  );
-}
-
-export async function getSessionCreds(sessionId: string): Promise<object | null> {
-  const redis = getRedis();
-  const raw = await redis.get(`${SESSION_PREFIX}${sessionId}`);
-  return raw ? JSON.parse(raw) : null;
-}
-
-export async function deleteSessionCreds(sessionId: string): Promise<void> {
-  const redis = getRedis();
-  await redis.del(`${SESSION_PREFIX}${sessionId}`);
-}
 
 export async function saveQR(sessionId: string, qrBase64: string): Promise<void> {
   const redis = getRedis();
@@ -59,23 +37,6 @@ export async function saveQR(sessionId: string, qrBase64: string): Promise<void>
 
 export async function getQR(sessionId: string): Promise<string | null> {
   return getRedis().get(`${QR_PREFIX}${sessionId}`);
-}
-
-export async function setSessionStatus(
-  sessionId: string,
-  status: "connecting" | "qr_ready" | "connected" | "disconnected",
-): Promise<void> {
-  await getRedis().set(`${STATUS_PREFIX}${sessionId}`, status);
-}
-
-export async function getSessionStatus(sessionId: string): Promise<string | null> {
-  return getRedis().get(`${STATUS_PREFIX}${sessionId}`);
-}
-
-export async function listActiveSessions(): Promise<string[]> {
-  const redis = getRedis();
-  const keys = await redis.keys(`${STATUS_PREFIX}*`);
-  return keys.map((k) => k.replace(STATUS_PREFIX, ""));
 }
 
 // ─── Cache de telefone da sessão ─────────────────────────────────────────────

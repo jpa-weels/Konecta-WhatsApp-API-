@@ -26,6 +26,7 @@ import { Card, CardHeader, CardTitle, CardContent, CardDescription, CardFooter }
 import { Badge } from "@/components/ui/Badge";
 import Modal from "@/components/Modal";
 import { useInstances } from "@/hooks/useInstances";
+import { useAuth } from "@/auth/AuthContext";
 import { cn, maskSecret, copyToClipboard, generateId } from "@/lib/utils";
 import { DEFAULT_API_URL } from "@/config";
 import type { InstanceState, CreateInstanceForm, SessionStatus } from "@/types";
@@ -279,7 +280,10 @@ const EMPTY_FORM: CreateInstanceForm = {
 };
 
 export default function InstancesPage() {
-  const { instances, addInstance, removeInstance, refreshInstance, restartInstance, updateInstance } = useInstances();
+  const { apiUrl, apiKey } = useAuth();
+  const { instances, addInstance, removeInstance, refreshInstance, restartInstance, updateInstance } = useInstances(
+    apiUrl && apiKey ? { apiUrl, apiKey } : undefined
+  );
 
   const [search, setSearch] = useState("");
   const [showCreate, setShowCreate] = useState(false);

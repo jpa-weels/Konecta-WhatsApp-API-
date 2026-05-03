@@ -12,6 +12,8 @@ export const save = mutation({
     timestamp: v.number(),
     direction: v.union(v.literal("inbound"), v.literal("outbound")),
     status: v.optional(v.string()),
+    storageId: v.optional(v.id("_storage")),
+    mediaUrl: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
     // Evita duplicatas pelo messageId
@@ -67,7 +69,7 @@ export const analytics = query({
     const msgs = await ctx.db
       .query("messages")
       .withIndex("by_timestamp", (q) => q.gte("timestamp", cutoff))
-      .collect();
+      .take(100_000);
 
     let inbound = 0, outbound = 0;
     const byDay: Record<number, { inbound: number; outbound: number }> = {};

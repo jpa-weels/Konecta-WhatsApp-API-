@@ -12,6 +12,8 @@ export default defineSchema({
     timestamp: v.number(),
     direction: v.union(v.literal("inbound"), v.literal("outbound")),
     status: v.optional(v.string()),
+    storageId: v.optional(v.id("_storage")),
+    mediaUrl: v.optional(v.string()),
   })
     .index("by_session", ["sessionId"])
     .index("by_messageId", ["messageId"])

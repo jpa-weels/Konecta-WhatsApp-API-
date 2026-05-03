@@ -12,8 +12,10 @@ import { Badge } from "@/components/ui/Badge";
 import Modal from "@/components/Modal";
 import { cn } from "@/lib/utils";
 import { useWebhooks } from "@/hooks/useWebhooks";
+import { useAuth } from "@/auth/AuthContext";
+import { useInstances } from "@/hooks/useInstances";
 import type { WebhookRecord } from "@/api/whatsapp";
-import type { InstanceConfig } from "@/types";
+import type { InstanceConfig, InstanceState } from "@/types";
 
 // ─── Eventos disponíveis ──────────────────────────────────────────────────────
 
@@ -157,13 +159,8 @@ function EventGroupSelector({
 // ─── Instance Selector ────────────────────────────────────────────────────────
 
 function InstanceSelector({
-  selected, onChange,
-}: { selected: string[]; onChange: (ids: string[]) => void }) {
-  const instances: InstanceConfig[] = (() => {
-    try { return JSON.parse(localStorage.getItem("whatsapp-instances") || "[]"); }
-    catch { return []; }
-  })();
-
+  selected, onChange, instances,
+}: { selected: string[]; onChange: (ids: string[]) => void; instances: InstanceState[] }) {
   if (!instances.length) return (
     <p className="text-xs text-muted-foreground">Nenhuma instância configurada.</p>
   );
@@ -203,11 +200,12 @@ function InstanceSelector({
 
 interface WebhookFormProps {
   initial?: Partial<WebhookRecord>;
+  instances: InstanceState[];
   onSubmit: (data: { name: string; url: string; events: string[]; sessionIds: string[] }) => Promise<void>;
   onClose: () => void;
 }
 
-function WebhookFormModal({ initial, onSubmit, onClose }: WebhookFormProps) {
+function WebhookFormModal({ initial, instances, onSubmit, onClose }: WebhookFormProps) {
   const [name, setName]           = useState(initial?.name ?? "");
   const [url, setUrl]             = useState(initial?.url ?? "");
   const [events, setEvents]       = useState<string[]>(initial?.events ?? ["MESSAGES_UPSERT"]);
@@ -256,7 +254,7 @@ function WebhookFormModal({ initial, onSubmit, onClose }: WebhookFormProps) {
       {/* Instâncias */}
       <div className="space-y-1.5">
         <label className="text-xs font-black uppercase tracking-widest text-muted-foreground">Instâncias *</label>
-        <InstanceSelector selected={sessionIds} onChange={setSessionIds} />
+        <InstanceSelector selected={sessionIds} onChange={setSessionIds} instances={instances} />
       </div>
 
       {/* Eventos */}
@@ -327,17 +325,13 @@ function DeleteModal({ webhook, onConfirm, onClose }: {
 
 // ─── Webhook Card ─────────────────────────────────────────────────────────────
 
-function WebhookCard({ webhook, onEdit, onToggle, onDelete }: {
+function WebhookCard({ webhook, onEdit, onToggle, onDelete, instances }: {
   webhook: WebhookRecord;
   onEdit: () => void;
   onToggle: () => void;
   onDelete: () => void;
+  instances: InstanceState[];
 }) {
-  const instances: InstanceConfig[] = (() => {
-    try { return JSON.parse(localStorage.getItem("whatsapp-instances") || "[]"); }
-    catch { return []; }
-  })();
-
   const instanceNames = webhook.sessionIds
     .map((sid) => instances.find((i) => i.sessionId === sid)?.name ?? sid.slice(0, 8))
     .join(", ");
@@ -359,6 +353,15 @@ function WebhookCard({ webhook, onEdit, onToggle, onDelete }: {
               </Badge>
             </div>
             <p className="text-[11px] font-mono text-muted-foreground truncate">{webhook.url}</p>
+            <div className="mt-1">
+              <code
+                onClick={() => navigator.clipboard.writeText(webhook._id)}
+                className="text-[9px] font-mono bg-secondary/50 hover:bg-secondary/80 px-1.5 py-0.5 rounded text-muted-foreground cursor-pointer transition-colors"
+                title="Clique para copiar ID"
+              >
+                ID: {webhook._id}
+              </code>
+            </div>
           </div>
 
           <div className="flex items-center gap-1 shrink-0">
@@ -404,7 +407,11 @@ function WebhookCard({ webhook, onEdit, onToggle, onDelete }: {
 // ─── Page ─────────────────────────────────────────────────────────────────────
 
 export default function WebhooksPage() {
-  const { webhooks, loading, error, hasApi, create, update, remove, toggle } = useWebhooks();
+  const { apiUrl, apiKey } = useAuth();
+  const { instances } = useInstances(apiUrl && apiKey ? { apiUrl, apiKey } : undefined);
+  const { webhooks, loading, error, hasApi, create, update, remove, toggle } = useWebhooks(
+    apiUrl && apiKey ? { apiUrl, apiKey } : undefined
+  );
 
   const [createOpen, setCreateOpen]     = useState(false);
   const [editTarget, setEditTarget]     = useState<WebhookRecord | null>(null);
@@ -473,6 +480,7 @@ export default function WebhooksPage() {
                 <WebhookCard
                   key={wh._id}
                   webhook={wh}
+                  instances={instances}
                   onEdit={() => setEditTarget(wh)}
                   onToggle={() => toggle(wh)}
                   onDelete={() => setDeleteTarget(wh)}
@@ -486,6 +494,7 @@ export default function WebhooksPage() {
       {/* Modal — Criar */}
       <Modal isOpen={createOpen} onClose={() => setCreateOpen(false)} title="Novo Webhook" maxWidth="560px">
         <WebhookFormModal
+          instances={instances}
           onSubmit={create}
           onClose={() => setCreateOpen(false)}
         />
@@ -496,6 +505,7 @@ export default function WebhooksPage() {
         {editTarget && (
           <WebhookFormModal
             initial={editTarget}
+            instances={instances}
             onSubmit={(data) => update(editTarget._id, data)}
             onClose={() => setEditTarget(null)}
           />

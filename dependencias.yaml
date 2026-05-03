@@ -10,7 +10,7 @@ services:
     environment:
       POSTGRES_USER: convex
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-05973401c17119eda312}
-      POSTGRES_DB: api_local
+      POSTGRES_DB: ${INSTANCE_NAME:-konecta}
     ports:
       - "5432:5432"
     volumes:
@@ -18,7 +18,7 @@ services:
     networks:
       - api_net
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U convex -d api_local"]
+      test: ["CMD-SHELL", "pg_isready -U convex -d ${INSTANCE_NAME:-konecta}"]
       interval: 5s
       timeout: 5s
       retries: 10
@@ -73,10 +73,10 @@ services:
       - "3211:3211"
     environment:
       - ACTIONS_USER_TIMEOUT_SECS
-      - APPLICATION_MAX_CONCURRENT_MUTATIONS=16
-      - APPLICATION_MAX_CONCURRENT_NODE_ACTIONS=16
-      - APPLICATION_MAX_CONCURRENT_QUERIES=16
-      - APPLICATION_MAX_CONCURRENT_V8_ACTIONS=16
+      - APPLICATION_MAX_CONCURRENT_MUTATIONS=32
+      - APPLICATION_MAX_CONCURRENT_NODE_ACTIONS=32
+      - APPLICATION_MAX_CONCURRENT_QUERIES=32
+      - APPLICATION_MAX_CONCURRENT_V8_ACTIONS=32
       - CONVEX_CLOUD_ORIGIN=${CONVEX_URL:-http://localhost:3210}
       - CONVEX_SITE_ORIGIN=${CONVEX_SITE_URL:-http://localhost:3211}
       - DISABLE_BEACON=true
@@ -84,8 +84,8 @@ services:
       - DOCUMENT_RETENTION_DELAY=172800
       - DO_NOT_REQUIRE_SSL=true
       - INSTANCE_NAME=${INSTANCE_NAME}
-      - INSTANCE_SECRET=${INSTANCE_SECRET}
-      - POSTGRES_URL=postgresql://convex:${POSTGRES_PASSWORD:-convexsecret}@postgres:5432
+      - INSTANCE_SECRET=b3871d82a2c1eb13409c3142ee8119d48794f7a0e2e00b7bbf9353b0f71dd3bc
+      - POSTGRES_URL=postgresql://convex:${POSTGRES_PASSWORD:-05973401c17119eda312}@postgres:5432
       - RUST_LOG=info
     depends_on:
       postgres:
